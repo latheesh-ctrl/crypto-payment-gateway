@@ -7,6 +7,7 @@ import com.cpg.gateway.idempotency.IdempotencyStore;
 import com.cpg.gateway.web.Problems;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -21,7 +22,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain apiSecurity(HttpSecurity http, ApiKeyService apiKeys, GatewayProperties properties,
+    SecurityFilterChain apiSecurity(HttpSecurity http, ApiKeyService apiKeys, RequestNonceStore nonces,
+                                    RateLimiter rateLimiter, GatewayProperties properties,
                                     IdempotencyStore idempotency, JsonMapper json) throws Exception {
         return http
                 // Stateless bearer-token API: no cookies, so CSRF protection does not apply.
@@ -30,7 +32,8 @@ public class SecurityConfig {
                 .httpBasic(b -> b.disable())
                 .formLogin(f -> f.disable())
                 .logout(l -> l.disable())
-                .addFilterBefore(new ApiKeyAuthenticationFilter(apiKeys), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(new MerchantAuthenticationFilter(apiKeys, nonces, rateLimiter, json),
+                        AnonymousAuthenticationFilter.class)
                 .addFilterBefore(new AdminTokenFilter(properties.security().adminToken()),
                         AnonymousAuthenticationFilter.class)
                 // After authorization, so only authenticated merchants reach it and keys are scoped per merchant.
@@ -39,7 +42,12 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/internal/**").hasRole("ADMIN")
-                        .requestMatchers("/v1/**").hasRole("MERCHANT")
+                        // Key scopes, most specific first.
+                        .requestMatchers("/v1/api_keys/**").hasAuthority("SCOPE_keys:manage")
+                        .requestMatchers("/v1/webhook_endpoints/**").hasAuthority("SCOPE_webhooks:manage")
+                        .requestMatchers(HttpMethod.POST, "/v1/payouts/**").hasAuthority("SCOPE_payouts:write")
+                        .requestMatchers(HttpMethod.GET, "/v1/**").hasAuthority("SCOPE_read")
+                        .requestMatchers("/v1/**").hasAuthority("SCOPE_deposits:write")
                         .anyRequest().denyAll())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint((req, res, ex) -> {

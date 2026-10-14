@@ -15,7 +15,7 @@ public final class TestMerchants {
 
     public static final String ADMIN_TOKEN = "test-admin-token";
 
-    public record Onboarded(String merchantId, String secret) {
+    public record Onboarded(String merchantId, String secret, String signingSecret, String keyId) {
 
         public MockHttpServletRequestBuilder authorize(MockHttpServletRequestBuilder request) {
             return request.header("Authorization", "Bearer " + secret);
@@ -38,10 +38,11 @@ public final class TestMerchants {
                 "{\"name\":\"Acme Ltd\",\"email\":\"%s@example.com\"}".formatted(UUID.randomUUID()));
         String merchantId = merchant.get("id").asString();
         JsonNode key = adminPost(mvc, json, "/internal/v1/merchants/" + merchantId + "/api-keys", "{\"name\":\"server\"}");
-        return new Onboarded(merchantId, key.get("secret").asString());
+        return new Onboarded(merchantId, key.get("secret").asString(), key.get("signing_secret").asString(),
+                key.get("id").asString());
     }
 
-    private static JsonNode adminPost(MockMvc mvc, JsonMapper json, String path, String body) throws Exception {
+    public static JsonNode adminPost(MockMvc mvc, JsonMapper json, String path, String body) throws Exception {
         String response = mvc.perform(post(path)
                         .header("X-Admin-Token", ADMIN_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)

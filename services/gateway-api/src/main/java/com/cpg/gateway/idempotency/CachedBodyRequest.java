@@ -11,7 +11,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
 /** Buffers the request body so it can be hashed before the controller reads it. */
-final class CachedBodyRequest extends HttpServletRequestWrapper {
+public final class CachedBodyRequest extends HttpServletRequestWrapper {
 
     private final byte[] body;
 
@@ -20,7 +20,7 @@ final class CachedBodyRequest extends HttpServletRequestWrapper {
         this.body = body;
     }
 
-    static CachedBodyRequest wrap(HttpServletRequest request, int maxBytes) throws IOException {
+    public static CachedBodyRequest wrap(HttpServletRequest request, int maxBytes) throws IOException {
         byte[] body = request.getInputStream().readNBytes(maxBytes + 1);
         if (body.length > maxBytes) {
             throw new IOException("request body exceeds " + maxBytes + " bytes");
@@ -28,7 +28,7 @@ final class CachedBodyRequest extends HttpServletRequestWrapper {
         return new CachedBodyRequest(request, body);
     }
 
-    byte[] body() {
+    public byte[] body() {
         return body;
     }
 

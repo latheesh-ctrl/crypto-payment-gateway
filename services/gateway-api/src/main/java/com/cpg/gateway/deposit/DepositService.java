@@ -287,6 +287,9 @@ public class DepositService {
         }
         BigInteger amount = d.amount();
         boolean userDeposit = d.ownerType().equals("user");
+        // Merchants that keep player balances themselves (games) get the deposit as liquidity only; the player's
+        // credit happens in the merchant's own wallet when it receives deposit.completed.
+        boolean platformKeepsPlayerBalance = userDeposit && !merchantManagedBalances(d.merchantId());
         BigInteger fee = userDeposit ? amount.multiply(BigInteger.valueOf(depositFeeBps(d.merchantId())))
                 .divide(BigInteger.valueOf(10_000)) : BigInteger.ZERO;
         String asset = d.assetId();
@@ -295,7 +298,7 @@ public class DepositService {
         entries.add(Posting.Entry.debit(AccountRef.platform(AccountKind.PLATFORM_DEPOSIT_WALLETS, asset), amount));
         addCredit(entries, AccountRef.merchant(AccountKind.MERCHANT_LIQUIDITY, d.merchantId(), asset), amount.subtract(fee));
         addCredit(entries, AccountRef.platform(AccountKind.PLATFORM_FEES, asset), fee);
-        if (userDeposit) {
+        if (platformKeepsPlayerBalance) {
             // The user is credited the full amount; the merchant owes it to them and bears the fee.
             entries.add(Posting.Entry.debit(
                     AccountRef.merchant(AccountKind.MERCHANT_USER_OBLIGATIONS, d.merchantId(), asset), amount));
@@ -320,6 +323,11 @@ public class DepositService {
         if (amount.signum() > 0) {
             entries.add(Posting.Entry.credit(account, amount));
         }
+    }
+
+    private boolean merchantManagedBalances(String merchantId) {
+        return jdbc.sql("SELECT player_balances = 'merchant_managed' FROM merchants WHERE id = :id")
+                .param("id", merchantId).query(Boolean.class).single();
     }
 
     private int depositFeeBps(String merchantId) {
