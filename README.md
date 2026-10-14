@@ -86,5 +86,9 @@ Integration tests start PostgreSQL with Testcontainers, so Docker must be runnin
 | `ADMIN_TOKEN` | Temporary operator credential for `/internal/**`; unset disables those routes |
 | `GATEWAY_MODE` | `test` (sandbox, accepts `sk_test_` keys) or `live` |
 | `DATA_ENCRYPTION_KEY` | Base64 AES-256 key encrypting webhook secrets at rest (required outside local dev) |
-| `JOBS_ENABLED` | Run background loops (webhook delivery, deposit verification retries) in this instance (default `true`) |
+| `JOBS_ENABLED` | Run background loops (webhook delivery, chain watchers, deposit verification retries) in this instance (default `true`) |
 | `WALLET_<CHAIN>_XPUB` | Account-level extended public key per chain for deposit addresses (TRON, ETHEREUM, BITCOIN, BSC, ARBITRUM). Never a private key. |
+| `INDEXER_<CHAIN>_ENABLED` | Scan this chain for deposits (default `false`) |
+| `INDEXER_<CHAIN>_RPC_URL` | Node or provider the watcher scans: EVM JSON-RPC, Tron full-node HTTP API, or Bitcoin Core RPC (credentials may go in the URL) |
+| `INDEXER_<CHAIN>_VERIFY_RPC_URLS` | Comma-separated independent providers that must all confirm a deposit before it is credited. Without them deposits wait at finality and are never credited. Use full nodes (receipts and transaction lookup required). |
+| `INDEXER_TRON_API_KEY` | TronGrid API key, if the Tron provider needs one |

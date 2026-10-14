@@ -105,6 +105,9 @@ public class DepositService {
         }
         Optional<Deposit> existing = findByTransfer(t.chain(), t.txHash(), t.outputIndex());
         if (existing.isPresent()) {
+            if (existing.get().status().equals("reversed") && t.blockNumber() != null && !simulated) {
+                return Optional.of(reinclude(existing.get(), t));
+            }
             return existing;
         }
 
@@ -130,6 +133,23 @@ public class DepositService {
         String reason = supported ? null
                 : asset.isEmpty() ? "token not supported on this chain"
                 : t.amount().signum() == 0 ? "zero amount" : "asset not accepted for payments";
+        if (supported && !simulated) {
+            // The same transaction mined again in another block can move its log index (EVM). If it was already
+            // credited from the old block, a person must decide; it is never credited twice automatically.
+            Optional<String> credited = jdbc.sql("""
+                            SELECT id FROM deposits
+                            WHERE chain_code = :c AND tx_hash = :tx AND status IN ('completed', 'needs_review')
+                              AND block_hash IS DISTINCT FROM :hash AND address_id = :addressId
+                            LIMIT 1
+                            """)
+                    .param("c", t.chain()).param("tx", t.txHash()).param("hash", t.blockHash())
+                    .param("addressId", owner.get().id())
+                    .query(String.class).optional();
+            if (credited.isPresent()) {
+                status = "needs_review";
+                reason = "transaction re-included after a reorg; already handled as " + credited.get();
+            }
+        }
 
         var a = owner.get();
         String id = Ids.next("dep");
@@ -164,8 +184,22 @@ public class DepositService {
         }
         history(id, null, status, reason);
         Deposit deposit = require(id);
-        event(deposit, supported ? "deposit.detected" : "deposit.unsupported");
+        event(deposit, "deposit." + status);
         return Optional.of(deposit);
+    }
+
+    /** A reversed transfer was mined again (after a reorg): it starts over from detected in its new block. */
+    private Deposit reinclude(Deposit d, ObservedTransfer t) {
+        jdbc.sql("""
+                        UPDATE deposits SET block_number = :block, block_hash = :hash, confirmations = 0,
+                               updated_at = now()
+                        WHERE id = :id AND status = 'reversed'
+                        """)
+                .param("block", t.blockNumber()).param("hash", t.blockHash()).param("id", d.id()).update();
+        transition(d.id(), "reversed", "detected", "re-included in block " + t.blockNumber());
+        Deposit revived = require(d.id());
+        event(revived, "deposit.detected");
+        return revived;
     }
 
     /**
