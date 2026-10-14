@@ -102,6 +102,18 @@ Flow:
 5. On completion the allocation is consumed. On a definitive failure or cancellation it returns to the merchant's available liquidity.
 6. **Not enough liquidity**: the cashout is accepted and reserved but waits in `awaiting_liquidity`. The merchant gets a `liquidity.low` webhook and dashboard alert, and the cashout proceeds automatically, oldest first, once a pay-in tops it up. Merchants set a low-balance alert threshold per asset.
 
+**User deposits fund liquidity automatically (decided 2026-10-14).** A confirmed user deposit both credits the user's balance and adds the crypto to that merchant's liquidity, so merchants only top up when cashouts exceed deposits. The ledger keeps the two claims distinct with a merchant-side obligation account, so the same coins are never counted twice:
+
+| Event | Postings (per asset) |
+|---|---|
+| User deposit confirmed (amount A, fee F borne by merchant by default) | Dr deposit_wallets A / Cr merchant_liquidity A-F / Cr platform_fees F; and Dr merchant_user_obligations A / Cr user_available A |
+| Merchant pay-in confirmed (amount P) | Dr deposit_wallets P / Cr merchant_liquidity P |
+| Cashout accepted (amount C, cashout fee K charged to the merchant) | Dr user_available C / Cr user_reserved C; Dr merchant_liquidity C+K / Cr merchant_liquidity_allocated C+K |
+| Cashout completed | Dr user_reserved C / Cr merchant_user_obligations C; Dr merchant_liquidity_allocated C+K / Cr hot_wallet C / Cr platform_fees K. Gas is paid in the chain's native coin and booked separately: Dr network_fee_expense / Cr hot_wallet (or gas wallet) in that coin |
+| Cashout failed or cancelled | Reverse the "accepted" postings |
+
+`merchant_user_obligations` (debit-normal) is what the merchant owes its users in total. At any time, merchant liquidity plus allocated equals the crypto the platform holds for that merchant, and user balances equal the merchant's obligations to its users. Whether the user is credited gross (merchant bears the deposit fee) or net is a per-merchant setting; gross is the default.
+
 Because liquidity is isolated per merchant and pre-funded, a merchant that fails can never consume another merchant's or the platform's funds. Its users' cashouts can only draw on what that merchant deposited. Withdrawing unused liquidity is a merchant payout (section 6), and amounts already allocated to pending cashouts can't be withdrawn.
 
 ## 6. Merchant payouts (new, separate from user cashouts)
@@ -197,5 +209,5 @@ All `POST` endpoints require `Idempotency-Key`. A user-facing H5 or web app can 
 ## 13. Open questions
 1. ~~How merchant liquidity relates to cashouts~~ Decided: own users only (section 5).
 2. ~~What merchants get for liquidity~~ Decided: nothing; it is required pre-funding (section 5).
-3. Do user deposits go to the merchant's liquidity automatically (proposed), or stay separate?
+3. ~~Do user deposits fund merchant liquidity?~~ Decided: yes, automatically (section 5).
 4. Custody provider for signing: Fireblocks, Turnkey, Cobo, or self-hosted MPC/HSM.

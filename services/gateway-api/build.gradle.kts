@@ -12,6 +12,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // HD public-key derivation and address encoding only; no private keys ever reach this service.
+    implementation("org.bitcoinj:bitcoinj-core:0.17.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
 

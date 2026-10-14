@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 /** Runs the dispatch and delivery loops. Disabled in tests, which drive them directly. */
 @Component
-@ConditionalOnProperty(name = "gateway.webhooks.scheduler-enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "gateway.jobs.enabled", havingValue = "true", matchIfMissing = true)
 class WebhookScheduler {
 
     private final WebhookDispatcher dispatcher;

@@ -15,7 +15,8 @@ import org.springframework.validation.annotation.Validated;
 public record GatewayProperties(
         @NotNull @DefaultValue("test") Mode mode,
         @NotNull Security security,
-        @NotNull @DefaultValue Webhooks webhooks) {
+        @NotNull @DefaultValue Webhooks webhooks,
+        @NotNull @DefaultValue Jobs jobs) {
 
     public enum Mode { test, live }
 
@@ -27,10 +28,11 @@ public record GatewayProperties(
     public record Security(@NotBlank String apiKeyPepper, String adminToken, @NotBlank String dataEncryptionKey) {
     }
 
-    /**
-     * @param schedulerEnabled run the dispatch and delivery loops in this process
-     * @param maxAttempts      deliveries are abandoned after this many failed attempts (about three days)
-     */
-    public record Webhooks(@DefaultValue("true") boolean schedulerEnabled, @DefaultValue("16") int maxAttempts) {
+    /** @param maxAttempts deliveries are abandoned after this many failed attempts (about three days) */
+    public record Webhooks(@DefaultValue("16") int maxAttempts) {
+    }
+
+    /** @param enabled run background loops (webhook delivery, verification retries) in this process */
+    public record Jobs(@DefaultValue("true") boolean enabled) {
     }
 }

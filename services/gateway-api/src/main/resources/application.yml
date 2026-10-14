@@ -40,5 +40,19 @@ gateway:
     admin-token: ${ADMIN_TOKEN:}
     # Base64 AES-256 key. The default is for local development only; production reads it from a secret store.
     data-encryption-key: ${DATA_ENCRYPTION_KEY:ZGV2LW9ubHktZGF0YS1lbmNyeXB0aW9uLWtleS0zMmI=}
-  webhooks:
-    scheduler-enabled: ${WEBHOOKS_SCHEDULER_ENABLED:true}
+  jobs:
+    enabled: ${JOBS_ENABLED:true}
+  # Deposit address derivation: account-level extended PUBLIC keys only, from the custody provider or HSM.
+  wallets:
+    chains:
+      TRON:
+        xpub: ${WALLET_TRON_XPUB:}
+      ETHEREUM:
+        xpub: ${WALLET_ETHEREUM_XPUB:}
+      BITCOIN:
+        xpub: ${WALLET_BITCOIN_XPUB:}
+        mainnet: ${WALLET_BITCOIN_MAINNET:false}
+      BSC:
+        xpub: ${WALLET_BSC_XPUB:}
+      ARBITRUM:
+        xpub: ${WALLET_ARBITRUM_XPUB:}

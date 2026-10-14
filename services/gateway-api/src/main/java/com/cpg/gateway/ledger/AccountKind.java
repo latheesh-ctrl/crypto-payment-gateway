@@ -13,6 +13,15 @@ public enum AccountKind {
     USER_RESERVED("reserved", Owner.USER, Side.CREDIT),
     MERCHANT_PENDING("pending", Owner.MERCHANT, Side.CREDIT),
     MERCHANT_AVAILABLE("available", Owner.MERCHANT, Side.CREDIT),
+    /** Crypto held for the merchant that can fund its users' cashouts (pay-ins plus its users' deposits). */
+    MERCHANT_LIQUIDITY("liquidity", Owner.MERCHANT, Side.CREDIT),
+    /** Liquidity earmarked for cashouts that are in flight. */
+    MERCHANT_LIQUIDITY_ALLOCATED("liquidity_allocated", Owner.MERCHANT, Side.CREDIT),
+    /**
+     * What the merchant owes its users in total. Debit-normal contra account that lets a user deposit credit both
+     * the user's balance and the merchant's liquidity without counting the same coins twice.
+     */
+    MERCHANT_USER_OBLIGATIONS("user_obligations", Owner.MERCHANT, Side.DEBIT),
     PLATFORM_DEPOSIT_WALLETS("deposit_wallets", Owner.PLATFORM, Side.DEBIT),
     PLATFORM_HOT_WALLET("hot_wallet", Owner.PLATFORM, Side.DEBIT),
     PLATFORM_COLD_WALLET("cold_wallet", Owner.PLATFORM, Side.DEBIT),
