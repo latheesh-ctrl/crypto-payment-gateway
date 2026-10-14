@@ -102,6 +102,16 @@ public class LedgerService {
         return new Result(txId, false);
     }
 
+    /**
+     * Current balance with the account's balance row locked until the transaction ends, so a caller can check
+     * funds and post against them without a race. Creates the account if it does not exist yet.
+     */
+    @Transactional
+    public BigInteger lockedBalance(AccountRef ref) {
+        String id = resolveAccount(ref);
+        return lockBalances(List.of(id)).get(id);
+    }
+
     public BigInteger balance(AccountRef ref) {
         return findAccount(ref)
                 .map(id -> jdbc.sql("SELECT balance FROM ledger_balances WHERE account_id = :id")

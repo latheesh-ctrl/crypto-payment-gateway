@@ -3,7 +3,7 @@ package com.cpg.gateway.chain;
 import java.math.BigInteger;
 
 /** Hex helpers for node responses. */
-final class Hex {
+public final class Hex {
 
     /** keccak256("Transfer(address,address,uint256)"), the ERC-20 / TRC-20 Transfer event topic. */
     static final String TRANSFER_TOPIC = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -16,7 +16,7 @@ final class Hex {
     }
 
     /** Unsigned integer from a 0x-quantity or plain hex word. */
-    static BigInteger uint(String hex) {
+    public static BigInteger uint(String hex) {
         String digits = strip(hex);
         if (digits.isEmpty() || !digits.matches("[0-9a-fA-F]+")) {
             throw new ChainRpcException("not a hex number: " + hex);
@@ -24,11 +24,11 @@ final class Hex {
         return new BigInteger(digits, 16);
     }
 
-    static long quantity(String hex) {
+    public static long quantity(String hex) {
         return uint(hex).longValueExact();
     }
 
-    static String quantity(long value) {
+    public static String quantity(long value) {
         return "0x" + Long.toHexString(value);
     }
 

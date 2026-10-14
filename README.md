@@ -50,6 +50,9 @@ curl -s localhost:8080/v1/assets -H 'Authorization: Bearer <secret>'
 |---|---|
 | `GET /v1/assets` | Supported chains and tokens |
 | `GET /v1/balances` | Merchant balances |
+| `GET /v1/liquidity` | Liquidity available for payouts and the amount reserved for payouts in flight |
+| `POST /v1/payment_sessions`, `GET /v1/payment_sessions[/{id}]`, `POST /v1/payment_sessions/{id}/cancel` | Deposit orders with their own address and hosted page ([guide](docs/payment-sessions.md)) |
+| `POST /v1/payouts`, `GET /v1/payouts[/{id}]`, `POST /v1/payouts/{id}/cancel` | Cashouts from merchant liquidity to a player's wallet ([guide](docs/payouts.md)) |
 | `POST /v1/users`, `GET /v1/users`, `GET /v1/users/{id}` | Register and look up your end users (`external_ref` is your id for them) |
 | `GET /v1/users/{id}/balances` | A user's available, pending and reserved balances |
 | `POST /v1/webhook_endpoints`, `GET /v1/webhook_endpoints`, `POST /v1/webhook_endpoints/{id}/disable` | Webhook subscriptions |
@@ -94,3 +97,8 @@ Integration tests start PostgreSQL with Testcontainers, so Docker must be runnin
 | `INDEXER_<CHAIN>_RPC_URL` | Node or provider the watcher scans: EVM JSON-RPC, Tron full-node HTTP API, or Bitcoin Core RPC (credentials may go in the URL) |
 | `INDEXER_<CHAIN>_VERIFY_RPC_URLS` | Comma-separated independent providers that must all confirm a deposit before it is credited. Without them deposits wait at finality and are never credited. Use full nodes (receipts and transaction lookup required). |
 | `INDEXER_TRON_API_KEY` | TronGrid API key, if the Tron provider needs one |
+| `PAYOUTS_<CHAIN>_ENABLED` | Send payouts on this chain (ETHEREUM, BSC, ARBITRUM; default `false`) |
+| `PAYOUTS_<CHAIN>_RPC_URL` | Node used to read nonces and gas prices, broadcast and track payout transactions |
+| `PAYOUTS_<CHAIN>_DEV_PRIVATE_KEY` | Hot wallet key for the `dev_key` signer: local and test networks only, refused in live mode |
+| `PAYOUTS_<CHAIN>_MAX_GAS_PRICE_WEI` | Payouts wait instead of signing while the network gas price is above this |
+| `PAYOUTS_STUCK_AFTER` | A payout transaction not final this long after broadcast goes to `needs_review` (default `30m`) |

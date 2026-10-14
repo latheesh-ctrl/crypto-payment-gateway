@@ -90,3 +90,24 @@ gateway:
         verify-rpc-urls: ${INDEXER_ARBITRUM_VERIFY_RPC_URLS:}
         poll-interval: 2s
         max-blocks-per-poll: 200
+  # Payout hot wallets per chain. Payouts are refused on chains not enabled here. The dev_key signer keeps a private
+  # key in memory and exists for local development and test networks only: live mode refuses to start with it.
+  payouts:
+    stuck-after: ${PAYOUTS_STUCK_AFTER:30m}
+    chains:
+      ETHEREUM:
+        enabled: ${PAYOUTS_ETHEREUM_ENABLED:false}
+        rpc-url: ${PAYOUTS_ETHEREUM_RPC_URL:}
+        dev-private-key: ${PAYOUTS_ETHEREUM_DEV_PRIVATE_KEY:}
+        max-gas-price-wei: ${PAYOUTS_ETHEREUM_MAX_GAS_PRICE_WEI:200000000000}
+      BSC:
+        enabled: ${PAYOUTS_BSC_ENABLED:false}
+        rpc-url: ${PAYOUTS_BSC_RPC_URL:}
+        dev-private-key: ${PAYOUTS_BSC_DEV_PRIVATE_KEY:}
+        max-gas-price-wei: ${PAYOUTS_BSC_MAX_GAS_PRICE_WEI:20000000000}
+      ARBITRUM:
+        enabled: ${PAYOUTS_ARBITRUM_ENABLED:false}
+        rpc-url: ${PAYOUTS_ARBITRUM_RPC_URL:}
+        dev-private-key: ${PAYOUTS_ARBITRUM_DEV_PRIVATE_KEY:}
+        max-gas-price-wei: ${PAYOUTS_ARBITRUM_MAX_GAS_PRICE_WEI:10000000000}
+        token-gas-limit: 1500000

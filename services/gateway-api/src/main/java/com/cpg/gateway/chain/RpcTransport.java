@@ -21,7 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
  * JSON over HTTP to a node or RPC provider: JSON-RPC 2.0 calls (EVM, Bitcoin) and plain JSON POSTs (Tron HTTP
  * API). Credentials in the URL's user-info become a Basic Authorization header and are never logged.
  */
-final class RpcTransport {
+public final class RpcTransport {
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -39,7 +39,7 @@ final class RpcTransport {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
-    RpcTransport(String url, Map<String, String> extraHeaders) {
+    public RpcTransport(String url, Map<String, String> extraHeaders) {
         URI uri = URI.create(url);
         if (!"https".equals(uri.getScheme()) && !"http".equals(uri.getScheme())) {
             throw new IllegalArgumentException("RPC URL must be http(s)");
@@ -58,7 +58,7 @@ final class RpcTransport {
     }
 
     /** JSON-RPC 2.0 call; returns {@code result}, which may be a JSON null. */
-    JsonNode call(String method, Object... params) {
+    public JsonNode call(String method, Object... params) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("jsonrpc", "2.0");
         body.put("id", ids.incrementAndGet());
