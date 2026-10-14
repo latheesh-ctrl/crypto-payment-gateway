@@ -2,6 +2,7 @@ package com.cpg.gateway.merchant;
 
 import com.cpg.gateway.apikey.ApiKeyService;
 import com.cpg.gateway.apikey.IssuedApiKey;
+import com.cpg.gateway.audit.AuditLog;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -24,6 +25,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/internal/v1/merchants")
 public class InternalMerchantController {
 
+    // Single shared operator identity until admin SSO gives each operator their own.
+    private static final AuditLog.Actor OPERATOR = AuditLog.Actor.operator("bootstrap-admin");
+
     private final MerchantService merchants;
     private final ApiKeyService apiKeys;
 
@@ -35,7 +39,7 @@ public class InternalMerchantController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Merchant create(@Valid @RequestBody CreateMerchantRequest request) {
-        return merchants.create(request.name(), request.email(), request.country());
+        return merchants.create(request.name(), request.email(), request.country(), OPERATOR);
     }
 
     @GetMapping("/{id}")
@@ -47,7 +51,7 @@ public class InternalMerchantController {
     @ResponseStatus(HttpStatus.CREATED)
     public IssuedApiKey createApiKey(@PathVariable String id, @Valid @RequestBody CreateApiKeyRequest request) {
         merchants.require(id);
-        return apiKeys.issue(id, request.name());
+        return apiKeys.issue(id, request.name(), OPERATOR);
     }
 
     public record CreateMerchantRequest(

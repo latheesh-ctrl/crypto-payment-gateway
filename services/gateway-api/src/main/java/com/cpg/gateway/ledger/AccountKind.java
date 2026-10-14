@@ -3,11 +3,14 @@ package com.cpg.gateway.ledger;
 /**
  * The kinds of ledger account and the side on which each one's balance grows.
  *
- * <p>Platform wallet accounts are assets of the platform (debit-normal). Merchant balances and fee revenue
- * are what the platform owes or has earned (credit-normal). A customer deposit is therefore
+ * <p>Platform wallet accounts are assets of the platform (debit-normal). User and merchant balances and fee
+ * revenue are what the platform owes or has earned (credit-normal). A customer deposit is therefore
  * {@code debit DEPOSIT_WALLETS / credit MERCHANT_PENDING}, and confirmation moves pending to available.
  */
 public enum AccountKind {
+    USER_PENDING("pending", Owner.USER, Side.CREDIT),
+    USER_AVAILABLE("available", Owner.USER, Side.CREDIT),
+    USER_RESERVED("reserved", Owner.USER, Side.CREDIT),
     MERCHANT_PENDING("pending", Owner.MERCHANT, Side.CREDIT),
     MERCHANT_AVAILABLE("available", Owner.MERCHANT, Side.CREDIT),
     PLATFORM_DEPOSIT_WALLETS("deposit_wallets", Owner.PLATFORM, Side.DEBIT),
@@ -17,7 +20,7 @@ public enum AccountKind {
     PLATFORM_FEES("fees", Owner.PLATFORM, Side.CREDIT),
     PLATFORM_NETWORK_FEE_EXPENSE("network_fee_expense", Owner.PLATFORM, Side.DEBIT);
 
-    public enum Owner { MERCHANT, PLATFORM }
+    public enum Owner { USER, MERCHANT, PLATFORM }
 
     public enum Side { DEBIT, CREDIT }
 
@@ -43,7 +46,7 @@ public enum AccountKind {
         return normalBalance;
     }
 
-    /** Merchant balances are liabilities to real customers and must never go below zero. */
+    /** User and merchant balances are liabilities to real people and must never go below zero. */
     public boolean mayGoNegative() {
         return owner == Owner.PLATFORM && this != PLATFORM_FEES;
     }

@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.cpg.common.ApiException;
 import com.cpg.gateway.IntegrationTest;
+import com.cpg.gateway.audit.AuditLog;
 import com.cpg.gateway.merchant.MerchantService;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -33,7 +34,7 @@ class LedgerServiceIT {
 
     @BeforeEach
     void createMerchant() {
-        merchantId = merchants.create("Acme", UUID.randomUUID() + "@example.com", null).id();
+        merchantId = merchants.create("Acme", UUID.randomUUID() + "@example.com", null, AuditLog.Actor.system("test")).id();
     }
 
     private AccountRef pending() {

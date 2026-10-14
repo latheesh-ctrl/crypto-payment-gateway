@@ -2,6 +2,8 @@ package com.cpg.gateway.security;
 
 import com.cpg.gateway.apikey.ApiKeyService;
 import com.cpg.gateway.config.GatewayProperties;
+import com.cpg.gateway.idempotency.IdempotencyFilter;
+import com.cpg.gateway.idempotency.IdempotencyStore;
 import com.cpg.gateway.web.Problems;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,6 +13,7 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -19,7 +22,7 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain apiSecurity(HttpSecurity http, ApiKeyService apiKeys, GatewayProperties properties,
-                                    JsonMapper json) throws Exception {
+                                    IdempotencyStore idempotency, JsonMapper json) throws Exception {
         return http
                 // Stateless bearer-token API: no cookies, so CSRF protection does not apply.
                 .csrf(csrf -> csrf.disable())
@@ -30,6 +33,8 @@ public class SecurityConfig {
                 .addFilterBefore(new ApiKeyAuthenticationFilter(apiKeys), AnonymousAuthenticationFilter.class)
                 .addFilterBefore(new AdminTokenFilter(properties.security().adminToken()),
                         AnonymousAuthenticationFilter.class)
+                // After authorization, so only authenticated merchants reach it and keys are scoped per merchant.
+                .addFilterAfter(new IdempotencyFilter(idempotency, json), AuthorizationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/error").permitAll()

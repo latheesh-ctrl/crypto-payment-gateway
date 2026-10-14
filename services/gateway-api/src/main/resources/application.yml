@@ -12,6 +12,9 @@ spring:
       maximum-pool-size: ${DATABASE_POOL_SIZE:20}
   flyway:
     locations: classpath:db/migration
+  jackson:
+    # Public API uses snake_case field names throughout.
+    property-naming-strategy: SNAKE_CASE
 
 server:
   shutdown: graceful
@@ -35,3 +38,7 @@ gateway:
     api-key-pepper: ${API_KEY_PEPPER:local-dev-pepper-change-me}
     # Temporary bootstrap credential for /internal endpoints until admin SSO lands. Empty disables them.
     admin-token: ${ADMIN_TOKEN:}
+    # Base64 AES-256 key. The default is for local development only; production reads it from a secret store.
+    data-encryption-key: ${DATA_ENCRYPTION_KEY:ZGV2LW9ubHktZGF0YS1lbmNyeXB0aW9uLWtleS0zMmI=}
+  webhooks:
+    scheduler-enabled: ${WEBHOOKS_SCHEDULER_ENABLED:true}
