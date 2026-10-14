@@ -80,7 +80,7 @@ States: `awaiting_payment → detected → confirming → completed`, plus `expi
 5. Track tx hash, nonce, gas, replacements and confirmations in `blockchain_transactions`.
 6. Settle only on final confirmation: debit user reserved, credit hot wallet / fees / network-fee expense. Release the reservation only after a **definitive** failure or an approved cancellation.
 
-States: `pending → approved → processing → broadcast → completed`, plus `failed`, `cancelled`, `rejected`, `needs_review`. **A broadcast is not a completed cashout**, and an uncertain outcome never triggers a second payout: it goes to `needs_review` with funds still reserved.
+States: `pending → (awaiting_liquidity) → approved → processing → broadcast → completed`, plus `failed`, `cancelled`, `rejected`, `needs_review`. **A broadcast is not a completed cashout**, and an uncertain outcome never triggers a second payout: it goes to `needs_review` with funds still reserved.
 
 ### 4.3 Callback authenticity, idempotency and audit (unchanged from v1)
 - Chain events come from internal indexers over the private bus only. External provider webhooks at `/hooks/{provider}` are signature-verified, timestamp-checked and deduplicated by provider event id.
@@ -88,17 +88,21 @@ States: `pending → approved → processing → broadcast → completed`, plus 
 - Uniqueness: deposits on `(chain, tx_hash, output_index)`, ledger postings by `reference`, API requests by `Idempotency-Key`, merchant references per merchant.
 - Status history tables and an append-only `audit_log` record every transition and admin action.
 
-## 5. Merchant pay-ins and liquidity (new)
+## 5. Merchant pay-ins and liquidity (decided 2026-10-14)
 
-Merchants send crypto to the platform to fund liquidity, for example so user cashouts can be paid.
+Rules confirmed by latheesh:
+- A merchant's liquidity pays **only its own users' cashouts**. There is no pooling across merchants.
+- The merchant earns **nothing** for providing it. Liquidity is simply the pre-funding the platform requires before it will pay out that merchant's users.
 
-1. Registered merchant requests a pay-in and receives a unique funding reference and deposit address (per merchant, chain and token).
-2. The on-chain transfer is verified exactly like a user deposit (asset eligible, finality reached, re-verified).
-3. Ledger: debit deposit_wallets, credit **merchant liquidity** (a liability to the merchant, separate account kind from any user or platform account).
-4. Only the eligible, unencumbered part is offered to the liquidity allocation service (minus anything reserved, frozen or under review).
-5. Allocation assigns merchant liquidity to eligible user cashouts under a documented priority policy (for example the user's own merchant first, then FIFO). Each allocation is a `liquidity_allocations` row and a ledger posting: debit merchant liquidity, credit merchant liquidity allocated, linked to the cashout id. On cashout completion the allocated amount settles. On failure it returns to the merchant's available liquidity.
+Flow:
+1. The merchant requests a pay-in and receives a unique funding reference and a deposit address per chain and token.
+2. The on-chain transfer is verified exactly like a user deposit (eligible asset, finality, independent re-verification).
+3. Ledger: debit deposit_wallets, credit **merchant liquidity** for that asset (a liability to the merchant, never mixed with user funds or platform revenue).
+4. When one of the merchant's users requests a cashout, the cashout reserves the user's balance **and** allocates the same amount (plus network fee, if the merchant bears it) from that merchant's available liquidity in the same asset and chain, in one database transaction: debit merchant liquidity, credit merchant liquidity allocated, with a `liquidity_allocations` row linking them.
+5. On completion the allocation is consumed. On a definitive failure or cancellation it returns to the merchant's available liquidity.
+6. **Not enough liquidity**: the cashout is accepted and reserved but waits in `awaiting_liquidity`. The merchant gets a `liquidity.low` webhook and dashboard alert, and the cashout proceeds automatically, oldest first, once a pay-in tops it up. Merchants set a low-balance alert threshold per asset.
 
-Merchant-funded liquidity stays distinguishable from user funds and platform revenue in the ledger at all times. Before launch you need to define the merchant's repayment, settlement, fee and insolvency treatment (see open questions).
+Because liquidity is isolated per merchant and pre-funded, a merchant that fails can never consume another merchant's or the platform's funds. Its users' cashouts can only draw on what that merchant deposited. Withdrawing unused liquidity is a merchant payout (section 6), and amounts already allocated to pending cashouts can't be withdrawn.
 
 ## 6. Merchant payouts (new, separate from user cashouts)
 
@@ -191,6 +195,7 @@ All `POST` endpoints require `Idempotency-Key`. A user-facing H5 or web app can 
 | 5. Cross-chain exchange | Provider integration, quotes, two-leg tracking, recovery workflow |
 
 ## 13. Open questions
-1. How do merchant liquidity and user cashouts relate? For example, are users the merchant's players, so the merchant's liquidity pays its own users' cashouts, or can one merchant's liquidity pay other merchants' users?
-2. What is a merchant owed back for liquidity it provides (repayment, fees earned) and what happens if a merchant fails?
-3. Custody provider for signing: Fireblocks, Turnkey, Cobo, or self-hosted MPC/HSM.
+1. ~~How merchant liquidity relates to cashouts~~ Decided: own users only (section 5).
+2. ~~What merchants get for liquidity~~ Decided: nothing; it is required pre-funding (section 5).
+3. Do user deposits go to the merchant's liquidity automatically (proposed), or stay separate?
+4. Custody provider for signing: Fireblocks, Turnkey, Cobo, or self-hosted MPC/HSM.
