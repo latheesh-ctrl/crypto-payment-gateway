@@ -3,6 +3,7 @@
 A multi-merchant, custodial crypto payment gateway. Merchants accept deposits and send cashouts in crypto on
 Tron, Ethereum, Bitcoin, BNB Smart Chain and Arbitrum, with a double-entry ledger as the source of truth.
 
+- Documentation index (workflows, full API reference, merchant and admin workflows): [docs/README.md](docs/README.md)
 - Architecture and roadmap: [docs/architecture.md](docs/architecture.md)
 - Deposits and cashouts design: [docs/payment-flows.md](docs/payment-flows.md)
 
