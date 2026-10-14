@@ -1,0 +1,4 @@
+gateway:
+  security:
+    api-key-pepper: test-pepper
+    admin-token: test-admin-token
