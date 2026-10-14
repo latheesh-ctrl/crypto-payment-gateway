@@ -12,7 +12,7 @@ class SecretCipherTest {
     private static SecretCipher cipher(byte[] key) {
         return new SecretCipher(new GatewayProperties(GatewayProperties.Mode.test,
                 new GatewayProperties.Security("pepper", null, Base64.getEncoder().encodeToString(key)),
-                new GatewayProperties.Webhooks(false, 16)));
+                new GatewayProperties.Webhooks(16), new GatewayProperties.Jobs(false)));
     }
 
     @Test

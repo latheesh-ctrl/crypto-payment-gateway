@@ -2,5 +2,17 @@ gateway:
   security:
     api-key-pepper: test-pepper
     admin-token: test-admin-token
-  webhooks:
-    scheduler-enabled: false
+  jobs:
+    enabled: false
+  wallets:
+    chains:
+      # BIP-32 test vector 1 master public key and the BIP-84 test vector account key. Public data only.
+      TRON:
+        xpub: xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8
+      ETHEREUM:
+        xpub: xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8
+      BSC:
+        xpub: xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8
+      BITCOIN:
+        xpub: zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs
+        mainnet: true

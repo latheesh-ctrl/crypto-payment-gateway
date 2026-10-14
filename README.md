@@ -86,4 +86,5 @@ Integration tests start PostgreSQL with Testcontainers, so Docker must be runnin
 | `ADMIN_TOKEN` | Temporary operator credential for `/internal/**`; unset disables those routes |
 | `GATEWAY_MODE` | `test` (sandbox, accepts `sk_test_` keys) or `live` |
 | `DATA_ENCRYPTION_KEY` | Base64 AES-256 key encrypting webhook secrets at rest (required outside local dev) |
-| `WEBHOOKS_SCHEDULER_ENABLED` | Run webhook dispatch and delivery in this instance (default `true`) |
+| `JOBS_ENABLED` | Run background loops (webhook delivery, deposit verification retries) in this instance (default `true`) |
+| `WALLET_<CHAIN>_XPUB` | Account-level extended public key per chain for deposit addresses (TRON, ETHEREUM, BITCOIN, BSC, ARBITRUM). Never a private key. |
