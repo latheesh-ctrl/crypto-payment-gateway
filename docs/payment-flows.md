@@ -1,163 +1,196 @@
-# Deposits and Cashouts: Gap Analysis and Updated Plan
+# Payment Flows: Gap Analysis and Updated Plan
 
-Status: proposal for review (2026-10-14). No existing code has been changed for this; it builds on the Phase 0 scaffold and on [gateway-architecture.md](gateway-architecture.md).
+Status: v2 proposal (2026-10-14), updated with latheesh's reference architecture. No existing code has been changed for this. It builds on the Phase 0 scaffold and on [gateway-architecture.md](gateway-architecture.md).
 
-## 1. Who "the user" is
+## 0. Guiding principle
 
-The gateway's customers are **merchants**. A merchant's own customers (players, shoppers) are **end users**. This plan assumes:
+The blockchain proves what the wallets hold and which transactions settled. The internal ledger records who owns those funds inside the platform. These are separate systems that are reconciled continuously, and **a database credit never stands in for crypto having been received**. Every credit is backed by a verified on-chain settlement, and every debit to an external address is settled only when the chain confirms it.
 
-- End users deposit and cash out **through a merchant's integration**. The merchant calls our API (or sends the end user to our hosted page), and every deposit and cashout carries the merchant's `customer_reference` for that end user.
-- Money is held in the **merchant's balance** in our ledger, per asset. The merchant keeps each end user's balance in its own system, which is how most gaming and exchange integrations work.
-- Optional later: per-end-user sub-balances inside our ledger (wallet-as-a-service). The schema below leaves room for it without rework. **[DECISION]**
+## 1. Actors and who owns the money
 
-"Payment gateway / funding method" here means on-chain crypto on the v1 chains, with no banking or fiat (decided earlier). The external provider is our custody provider (MPC) for sending, plus the chain indexers and RPC providers for receiving.
-
-## 2. What exists today (Phase 0)
-
-| Area | Built | Notes |
+| Actor | Holds a ledger balance? | Notes |
 |---|---|---|
-| Merchants | `merchants` table, operator create/get API | KYC optional (`kyc_status`, default `not_required`) |
-| API keys | `api_keys`, HMAC-peppered hashes, `sk_test_` / `sk_live_`, bearer auth filter | Sandbox and live are separate deployments |
-| Asset registry | `chains`, `assets`, seeded with all v1 chains/tokens, `GET /v1/assets` | New tokens are rows |
-| Ledger | Double-entry, append-only (DB triggers), per-asset balance checked at commit, idempotent by `reference`, row-locked balances, merchant balances can't go negative | Account kinds: pending, available, deposit_wallets, hot_wallet, cold_wallet, gas, fees, network_fee_expense |
-| Balances API | `GET /v1/balances` (available, pending as decimal strings) | |
-| Outbox | `outbox_events` written in the same transaction as ledger postings | Relay to NATS not built yet |
-| Errors | RFC 9457 problem+json with stable `code` | |
-| Tests | 15 tests incl. concurrency, idempotency, append-only, DB-level balance check (Testcontainers Postgres) | All green |
+| **Users** (end users: players, customers) | Yes, per asset | Deposit, cash out, exchange. Belong to a merchant. |
+| **Merchants** | Yes, kept apart from user funds | Fund liquidity with pay-ins, receive payouts, earn or pay fees |
+| **Platform** | Treasury, fee revenue and expense accounts | Never mixed with user or merchant funds |
+| **Admins** | No | Approvals, limits, reviews, all audited |
 
-## 3. Gaps against the requirements
+This follows the reference architecture: users have their own internal balances, credited on deposit and reserved on cashout. It replaces the v1 assumption that only merchants hold balances (it answers the open card on where user balances are kept).
 
-| Requirement | Status | What's missing |
-|---|---|---|
-| **A. Deposits** | | |
-| Create and track deposit requests | Missing | `deposits` table, API, state machine |
-| Handle gateway responses, webhooks, async callbacks | Missing | Indexer events consumer, inbound provider webhook endpoint, callback log |
-| Verify callback authenticity, block forgeries | Missing | Signature verification, replay protection, re-verification against the chain |
-| Correct status updates | Missing | Guarded state transitions with history |
-| Credit only after verified confirmation | Partly | Ledger supports pending vs available; no confirmation logic yet |
-| No duplicate credits | Partly | Ledger `reference` is unique; needs deposit-level unique keys (chain + tx hash + output index) |
-| Full history and audit trail | Partly | Ledger is append-only; needs status history and an audit log |
-| **B. Cashouts** | | |
-| Eligible users request cashouts | Missing | API, eligibility rules |
-| Validate balance and limits | Partly | Ledger blocks negative balances; no limits engine |
-| Reserve funds atomically against concurrent requests | Partly | Row-locked postings exist; needs a `reserved` account kind and reserve/release postings |
-| Statuses pending, processing, completed, failed, cancelled | Missing | `cashouts` table and state machine |
-| Payout provider integration | Missing | `PayoutProvider` adapter for the custody provider |
-| Callbacks, timeouts, retries, delayed confirmations | Missing | Callback handler, status poller, safe-retry rules, chain confirmation tracking |
-| Merchant notifications | Missing | Webhook delivery service (designed in the main plan, not built) |
-
-Nothing built so far has to be rewritten. All changes are additive: new tables in a new migration, new account kinds, new modules.
-
-## 4. Deposit design
-
-### 4.1 Flow
-1. Merchant calls `POST /v1/deposits` with asset, optional expected amount, `customer_reference`, `merchant_reference` and an `Idempotency-Key`. Or the end user uses a permanent per-customer deposit address (`POST /v1/customers/{ref}/deposit-addresses`), which is common for gaming.
-2. Wallet service assigns a deposit address the platform controls (derived from an xpub on Bitcoin, from the MPC vault on EVM and Tron).
-3. The chain indexer sees a transfer to a watched address and emits `chain.transfer.detected`. The deposit moves to `detected` and the ledger posts **debit deposit_wallets / credit merchant pending**.
-4. The indexer tracks confirmations. When the chain's threshold is reached (and the block is still canonical), the deposit moves to `confirmed`. The ledger posts **debit merchant pending / credit merchant available (net of fee) + credit platform fees**.
-5. Each status change writes an outbox event, which becomes a signed merchant webhook (`deposit.detected`, `deposit.confirmed`, ...).
-6. A sweeper later moves funds from deposit addresses to the hot wallet (**debit hot_wallet / credit deposit_wallets**, gas to network_fee_expense).
-
-### 4.2 States
-`awaiting_payment → detected → confirming → completed`, plus `expired` (no payment in time), `underpaid` / `overpaid` (outside tolerance, still credited for what arrived, flagged for the merchant), `reversed` (chain reorg removed the transaction before final), `rejected` (AML hit, funds frozen pending review). Transitions go through one guarded method (`UPDATE ... WHERE status = :expected`) so two workers cannot apply conflicting changes.
-
-### 4.3 Callback authenticity and forged requests
-- **Chain events are internal**: indexers publish to NATS on a private network with per-service credentials. The public internet cannot send them.
-- **External provider webhooks** (custody provider, any future third-party funding method) arrive at `/hooks/{provider}`. Each adapter verifies the provider's signature (HMAC or RSA, per provider), rejects timestamps older than 5 minutes, and records the provider's event id in `provider_callbacks` (unique on provider + event id) so replays are dropped.
-- **Never trust the payload alone**: before crediting, the deposit service re-reads the transaction from at least one independent RPC provider and checks recipient, token contract, amount and confirmations. A forged or spoofed callback can at most trigger a check that fails.
-- Fake-token protection: only transfers from contracts in the asset registry count. Lookalike tokens are ignored.
-
-### 4.4 Duplicate-credit protection
-- `deposits` unique on `(chain_code, tx_hash, output_index)`, where output index is the log index on EVM/Tron and the vout on Bitcoin.
-- Ledger references derived from that key (`deposit:{chain}:{tx}:{idx}:detected`, `...:confirmed`), so even a reprocessed event cannot post twice.
-- Merchant API idempotency via `Idempotency-Key` (stored with the response for 24h) and unique `merchant_reference` per merchant.
-
-## 5. Cashout design
-
-### 5.1 Flow
-1. Merchant calls `POST /v1/cashouts` with asset, amount, destination address, `customer_reference`, `merchant_reference` and an `Idempotency-Key`.
-2. **Validation**: merchant active, asset enabled, address valid for the chain (checksum, network), amount within min/max, velocity limits (per merchant and per `customer_reference`, daily and monthly), optional address whitelist, AML screening of the destination.
-3. **Atomic reservation**: in one database transaction, insert the cashout as `pending` and post **debit merchant available / credit merchant reserved** for amount + fee. The ledger locks the balance rows and refuses to go negative, so two concurrent cashouts cannot spend the same funds (already proven by the concurrency test pattern).
-4. **Approval**: auto-approved below the merchant's threshold, otherwise queued for an operator (two-person approval above a higher threshold).
-5. **Processing**: the payout worker submits to the custody provider using our cashout id as the provider's idempotency key, and the status moves to `processing`.
-6. **Broadcast and confirmation**: the provider callback or status poll gives the tx hash, and the indexer tracks confirmations. On final confirmation the status becomes `completed` and the ledger posts **debit merchant reserved / credit hot_wallet** plus fee to platform fees and actual network fee to network_fee_expense.
-7. **Failure or cancel**: release with **debit merchant reserved / credit merchant available**. Cancel is allowed only before submission to the provider.
-
-### 5.2 States
-`pending → approved → processing → broadcast → completed`, plus `failed`, `cancelled`, `rejected` (limits, AML or operator), and `needs_review` (outcome unknown, see below). Every transition is recorded in `cashout_status_history` with actor and reason.
-
-### 5.3 Timeouts, retries and delayed confirmations
-- **Safe retries only**: a submission is retried only when the provider confirms it never received it, or when the provider supports idempotency keys (our cashout id), so a retry can never send twice.
-- **Unknown outcome**: if a submission times out, the cashout is not failed or resubmitted. A poller queries the provider by our id with backoff. If it is still unknown after a limit, it moves to `needs_review` and alerts operations. Funds stay reserved throughout.
-- **Delayed confirmations**: a broadcast transaction may take minutes or hours. It stays `broadcast` until the indexer confirms it. If a transaction is dropped or replaced (EVM nonce, Bitcoin RBF), the payout worker rebuilds with the same cashout id after checking the original can no longer confirm.
-- **Hot wallet low**: cashouts queue in `approved` and operations is alerted to top up from warm or cold storage. Nothing fails because of liquidity.
-
-## 6. Cross-cutting additions
-- `audit_log`: append-only record of every operator and merchant action (who, what, before/after, IP).
-- `idempotency_keys`: merchant API idempotency, scoped per merchant, stores the request hash and response.
-- `provider_callbacks`: raw inbound webhooks with verification result, for forensics and replay.
-- Outbox relay to NATS and the merchant webhook service (signed `deposit.*` and `cashout.*` events with retries).
-- Daily reconciliation: on-chain balances against ledger per asset, and provider-side payout records against cashouts.
-- Metrics and alerts: deposits stuck in confirming, cashouts in processing or needs_review beyond SLA, hot wallet below threshold.
-
-## 7. Schema changes (new migration V3, additive)
+Logical architecture: one well-separated modular application first (the existing `gateway-api` with a module per area), extracting services only where load or isolation justifies it. The one module that is isolated from day one is **signing**: it runs separately and the public API can never reach keys.
 
 ```
-deposit_addresses (id, merchant_id, customer_reference NULL, chain_code, address, derivation_ref, status, created_at)
-  UNIQUE (chain_code, address)
-
-deposits (id, merchant_id, customer_reference, merchant_reference, asset_id, address_id,
-          expected_amount NULL, received_amount, status, chain_code, tx_hash, output_index,
-          confirmations, block_number, detected_at, completed_at, expires_at, created_at, updated_at)
-  UNIQUE (chain_code, tx_hash, output_index)
-  UNIQUE (merchant_id, merchant_reference)
-
-cashouts (id, merchant_id, customer_reference, merchant_reference, asset_id, amount, fee,
-          destination_address, status, provider, provider_ref, tx_hash, network_fee,
-          failure_code, failure_reason, approved_by, requested_at, completed_at, updated_at)
-  UNIQUE (merchant_id, merchant_reference)
-
-deposit_status_history / cashout_status_history (id, parent_id, from_status, to_status, actor, reason, at)
-
-cashout_limits (merchant_id, asset_id, min_amount, max_amount, daily_limit, monthly_limit,
-                per_customer_daily_limit, manual_approval_above)
-
-idempotency_keys (merchant_id, key, request_hash, response_status, response_body, created_at)
-  PRIMARY KEY (merchant_id, key)
-
-provider_callbacks (id, provider, event_id, signature_valid, payload, received_at, processed_at)
-  UNIQUE (provider, event_id)
-
-audit_log (id, actor_type, actor_id, action, target_type, target_id, details jsonb, ip, at)  -- append-only
+Users · Merchants · Admins  (web, H5, API clients)
+  └─ API gateway & authorization: auth, permissions, rate limits, idempotency
+      └─ Payment orchestration: deposits · cashouts · merchant pay-ins · merchant payouts · cross-chain exchange
+          ├─ Ledger: double-entry journal, balance projections, reservations, audit trail
+          └─ Wallet security: address management, signing authorization, transaction policies (isolated)
+              └─ Blockchain infrastructure: nodes/RPC, monitoring, confirmations, reconciliation
+Supporting: KMS/MPC custody, liquidity monitoring, risk controls, reconciliation, alerting, admin approvals
 ```
 
-New ledger account kind: `MERCHANT_RESERVED` (credit-normal, cannot go negative). Existing tables are unchanged.
+## 2. Comparison with the reference architecture
 
-## 8. API additions
+| Reference item | Our plan before | Now |
+|---|---|---|
+| Ledger separate from chain truth, reconciled continuously | Yes (daily reconciliation, proof of solvency) | Same; reconciliation also covers provider records |
+| Modular monolith first, extract later | Built that way (modules in `gateway-api`) | Same |
+| Hot / warm / cold wallets with limits | Yes (architecture 4.4) | Added explicit per-tier limits and approval rules (section 8) |
+| MPC/HSM or institutional custody, no keys in code, DB or logs | Yes | Same; signing isolated as its own service |
+| Deposit address per user without a key per user | Yes (HD/xpub, MPC vault addresses) | Same |
+| A. User deposits | Yes, but credited merchants | Credits the **user's** ledger balance |
+| B. User cashouts | Yes, but debited merchants | Reserves and debits the **user's** balance |
+| C. Merchant pay-ins and liquidity allocation | **Missing** | Added (section 5) |
+| D. Merchant payouts, separate from user cashouts | Partly (merchant settlement) | Added as its own flow (section 6) |
+| E. Cross-chain exchange | **Missing** | Added via an audited provider, later phase (section 7) |
+| `blockchain_transactions` as its own record | Partly (tx fields on deposits) | Added table shared by all flows |
+| Chain-specific finality, reorgs, dropped tx, nonce conflicts, RPC disagreement | Mostly | Added RPC quorum and nonce management (section 9) |
+| KYC/AML, licensing, safeguarding | KYC optional by your choice, AML screening on | Unchanged; licensing still needs legal advice before real funds |
+
+## 3. What exists today (Phase 0)
+
+| Area | Built |
+|---|---|
+| Merchants | `merchants` table, operator create/get API, optional KYC status |
+| API keys | HMAC-peppered hashes, `sk_test_` / `sk_live_`, bearer auth |
+| Asset registry | `chains`, `assets` seeded with all v1 chains and tokens, `GET /v1/assets` |
+| Ledger | Double-entry, append-only (DB triggers), balanced per asset at commit, idempotent by `reference`, row-locked balances, merchant balances can't go negative |
+| Balances | `GET /v1/balances` |
+| Outbox | Written in the same transaction as postings (relay not built) |
+| Tests | 15 green, including concurrency, idempotency, append-only and DB-level balance check |
+
+All changes below are additive. `ledger_transactions` already plays the role of the reference's `ledger_journals`. The ledger's owner types gain `user`, and new account kinds are added. Nothing built needs rewriting.
+
+## 4. User deposits and cashouts
+
+### 4.1 Deposits
+1. Assign an approved deposit address for the user, chain and token (permanent per user and chain, or per request).
+2. The indexer detects the transfer and identifies tx hash, token contract, recipient and amount. **Native coins and tokens are handled separately**: native transfers from transaction values (and internal calls on EVM), tokens from `Transfer` logs (EVM) or TRC-20 events (Tron), UTXO outputs on Bitcoin.
+3. Reject unsupported tokens, lookalike contracts and wrong networks. These are recorded as `unsupported` for manual recovery, never credited.
+4. Wait for the chain's finality policy, re-verify against an independent RPC, then credit the user's ledger **exactly once**: debit deposit_wallets, credit user available.
+5. Periodically sweep to treasury (hot) wallets. Gas comes from the per-chain gas wallet.
+
+States: `awaiting_payment → detected → confirming → completed`, plus `expired`, `underpaid`, `overpaid`, `reversed` (reorg), `rejected` (AML), `unsupported`. A user sees a pending amount while confirming, but it is not spendable.
+
+### 4.2 Cashouts
+1. Authenticate the user (via the merchant integration or user session) and check withdrawal permission, destination format and network, asset and chain.
+2. Run risk checks: velocity, limits, destination screening, fraud rules, optional KYC if the merchant or country requires it.
+3. Atomically reserve: debit user available, credit user reserved (amount + fee), in the same transaction as inserting the cashout.
+4. Submit an authorized instruction to the signing service with policy limits, and a second approval above thresholds.
+5. Track tx hash, nonce, gas, replacements and confirmations in `blockchain_transactions`.
+6. Settle only on final confirmation: debit user reserved, credit hot wallet / fees / network-fee expense. Release the reservation only after a **definitive** failure or an approved cancellation.
+
+States: `pending → approved → processing → broadcast → completed`, plus `failed`, `cancelled`, `rejected`, `needs_review`. **A broadcast is not a completed cashout**, and an uncertain outcome never triggers a second payout: it goes to `needs_review` with funds still reserved.
+
+### 4.3 Callback authenticity, idempotency and audit (unchanged from v1)
+- Chain events come from internal indexers over the private bus only. External provider webhooks at `/hooks/{provider}` are signature-verified, timestamp-checked and deduplicated by provider event id.
+- Payloads are never trusted alone: settlement is re-verified on chain before any credit.
+- Uniqueness: deposits on `(chain, tx_hash, output_index)`, ledger postings by `reference`, API requests by `Idempotency-Key`, merchant references per merchant.
+- Status history tables and an append-only `audit_log` record every transition and admin action.
+
+## 5. Merchant pay-ins and liquidity (new)
+
+Merchants send crypto to the platform to fund liquidity, for example so user cashouts can be paid.
+
+1. Registered merchant requests a pay-in and receives a unique funding reference and deposit address (per merchant, chain and token).
+2. The on-chain transfer is verified exactly like a user deposit (asset eligible, finality reached, re-verified).
+3. Ledger: debit deposit_wallets, credit **merchant liquidity** (a liability to the merchant, separate account kind from any user or platform account).
+4. Only the eligible, unencumbered part is offered to the liquidity allocation service (minus anything reserved, frozen or under review).
+5. Allocation assigns merchant liquidity to eligible user cashouts under a documented priority policy (for example the user's own merchant first, then FIFO). Each allocation is a `liquidity_allocations` row and a ledger posting: debit merchant liquidity, credit merchant liquidity allocated, linked to the cashout id. On cashout completion the allocated amount settles. On failure it returns to the merchant's available liquidity.
+
+Merchant-funded liquidity stays distinguishable from user funds and platform revenue in the ledger at all times. Before launch you need to define the merchant's repayment, settlement, fee and insolvency treatment (see open questions).
+
+## 6. Merchant payouts (new, separate from user cashouts)
+
+1. Calculate the merchant's payable balance under its settlement rules: earned fees or revenue share, unallocated liquidity it may withdraw, minus holds and negative adjustments.
+2. Validate amount, asset, chain, whitelisted destination (24 to 48 hour cool-down after changes) and approval requirements (always two-person above a threshold).
+3. Reserve (debit merchant payable, credit merchant payout reserved) and submit a unique payout instruction.
+4. Track execution on chain, then settle the merchant liability on final confirmation.
+5. Reconcile fees, failed transactions, refunds and discrepancies.
+
+It reuses the same signing and transaction-tracking services as user cashouts, but has its own table, states, ledger accounts, limits and approvals, so the business logic and accounting never mix.
+
+## 7. Cross-chain exchange (new, later phase)
+
+1. Accept only configured pairs (source chain/token to destination chain/token).
+2. Get a quote from an approved, audited swap, bridge or institutional liquidity provider. Enforce expiry, fees and slippage limits.
+3. Reserve the user's source-asset balance and create a unique exchange operation.
+4. Execute the source leg and confirm it, then track the destination leg independently.
+5. Credit the destination asset only after verified settlement, then reconcile both legs and all fees. Ledger postings balance per asset, using an exchange clearing account per asset, so ETH and USDC are never added together.
+6. Partial failures (source settled, destination stuck) go to a recovery workflow with operator tooling. Nothing is assumed reversible.
+
+We will not build our own bridge or trust a bridge message without the provider's settlement evidence.
+
+## 8. Wallets and custody
+
+| Tier | Purpose | Controls |
+|---|---|---|
+| Hot | Sweeps, approved cashouts and payouts, operational transfers | Holds only expected activity (target 5 to 10% of liabilities per asset); per-transaction and daily limits; automated signing within policy only |
+| Warm | Replenishes hot | Stricter authorization, risk checks, multiple approvals (MPC quorum) |
+| Cold | Long-term reserves | Offline or highly isolated; manual multi-party signing; not reachable from the payment API |
+
+- Custody via an institutional provider or MPC/HSM signing. Keys and seed phrases never appear in source code, ordinary database rows or logs (OWASP cryptographic storage guidance).
+- The signing service is isolated: it only accepts instructions that pass its own policy (destination allowlists, limits, approvals) and it re-checks them independently of the API.
+- Key rotation and recovery procedures are documented and rehearsed before mainnet.
+- Liquidity monitor: alerts when hot falls below or rises above target, and proposes warm-to-hot or hot-to-cold transfers for approval.
+
+## 9. Blockchain monitoring safeguards
+- Chain-specific finality rules (Ethereum finalized checkpoints or a confirmation depth, Tron solidified blocks, Bitcoin depth by amount, Arbitrum L1 batch finality for large amounts), never one fixed count.
+- Reorg handling: block hashes tracked; credits not yet final are reversed by compensating entries.
+- **RPC quorum**: at least two independent providers; a credit or settlement needs both to agree. Disagreement pauses that chain's processing and alerts.
+- RPC outage: indexers resume from a stored cursor, with no gaps.
+- Outgoing transactions: nonce manager per hot-wallet address (EVM and Tron), replacement and speed-up tracked as linked rows in `blockchain_transactions`, dropped transactions detected and rebuilt only once the original provably cannot confirm.
+
+## 10. Schema changes (new migration V3, additive)
+
+Mapped from the reference's logical entities to our schema:
+
+| Reference entity | Our table(s) |
+|---|---|
+| users, merchants | `users` (new: id, merchant_id, external_ref, status, kyc_status, limits profile), existing `merchants` |
+| wallet_addresses | `deposit_addresses` (owner type user or merchant, chain, asset context, address, derivation ref, status) |
+| blockchain_transactions | `blockchain_transactions` (chain, tx hash, direction, from/to, nonce, block, confirmations, status, gas used, replaced_by) |
+| ledger_accounts | existing `ledger_accounts`; owner type gains `user`; new kinds below |
+| ledger_journals, ledger_entries | existing `ledger_transactions`, `ledger_entries` |
+| deposits | `deposits` |
+| cashouts | `cashouts` + `cashout_status_history` |
+| merchant_payins | `merchant_payins` |
+| merchant_payouts | `merchant_payouts` + status history |
+| liquidity_allocations | `liquidity_allocations` (merchant, cashout, asset, amount, status) |
+| cross_chain_exchanges | `cross_chain_exchanges` (quote, provider, source leg, destination leg, fees, recovery status) |
+| outbox_events, audit_logs | existing `outbox_events`, new `audit_log` |
+| (supporting) | `idempotency_keys`, `provider_callbacks`, `limits`, `wallets` (tier, chain, address, limits) |
+
+New ledger account kinds: `USER_AVAILABLE`, `USER_PENDING`, `USER_RESERVED`, `MERCHANT_LIQUIDITY`, `MERCHANT_LIQUIDITY_ALLOCATED`, `MERCHANT_PAYABLE`, `MERCHANT_PAYOUT_RESERVED`, `PLATFORM_WARM_WALLET`, `PLATFORM_EXCHANGE_CLEARING`. User and merchant kinds can never go negative.
+
+## 11. API additions
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/deposits`, `GET /v1/deposits/{id}`, `GET /v1/deposits?customer_reference=` | Create and track deposits |
-| `POST /v1/customers/{ref}/deposit-addresses` | Permanent deposit address per end user and chain |
-| `POST /v1/cashouts`, `GET /v1/cashouts/{id}`, `GET /v1/cashouts` | Request and track cashouts |
-| `POST /v1/cashouts/{id}/cancel` | Cancel before submission |
-| `POST /hooks/{provider}` | Signed provider callbacks (not under `/v1`, no API key, signature required) |
-| `/internal/v1/cashouts/{id}/approve`, `/reject` | Operator review |
-| `/internal/v1/merchants/{id}/limits` | Configure cashout limits |
+| `POST /v1/users`, `GET /v1/users/{id}/balances` | Merchant registers its users; user balances |
+| `POST /v1/users/{id}/deposit-addresses`, `GET /v1/deposits` | User deposits |
+| `POST /v1/users/{id}/cashouts`, `GET /v1/cashouts/{id}`, `POST /v1/cashouts/{id}/cancel` | User cashouts |
+| `POST /v1/payins`, `GET /v1/payins/{id}`, `GET /v1/liquidity` | Merchant pay-ins and liquidity |
+| `POST /v1/payouts`, `GET /v1/payouts/{id}` | Merchant payouts |
+| `POST /v1/exchange/quotes`, `POST /v1/exchanges` | Cross-chain exchange (later phase) |
+| `POST /hooks/{provider}` | Signed provider callbacks |
+| `/internal/v1/...` | Approvals, limits, recovery, reconciliation reports |
 
-All `POST` endpoints require `Idempotency-Key`.
+All `POST` endpoints require `Idempotency-Key`. A user-facing H5 or web app can sit on top of the same API with user sessions later.
 
-## 9. Updated delivery plan
+## 12. Updated delivery plan
 
 | Phase | Scope |
 |---|---|
 | 0. Foundations (done, in review) | Repo, CI, merchants, API keys, asset registry, ledger core, balances |
-| 1a. Platform plumbing | Idempotency keys, audit log, status-history pattern, outbox relay to NATS, merchant webhooks |
-| 1b. Deposits (testnets) | Deposit addresses, deposits API and state machine, Tron + EVM indexers, then Bitcoin, confirmation and reorg handling, re-verification, sweeps |
-| 2. Cashouts (testnets) | Reserved balances, limits engine, cashouts API and state machine, custody provider adapter, callbacks, poller, safe retries, operator approval |
-| 3. Live beta | Mainnet, AML screening, reconciliation jobs, alerting, dashboards for deposits and cashouts, pilot merchants |
-| 4. Scale | Per-end-user sub-balances (if chosen), more chains, multi-region |
+| 1a. Platform plumbing | Users, idempotency keys, audit log, status-history pattern, outbox relay, merchant webhooks, `blockchain_transactions` |
+| 1b. Deposits (testnets) | User and merchant pay-in addresses, Tron and EVM indexers, then Bitcoin, finality, reorgs, RPC quorum, sweeps |
+| 2. Cashouts and payouts (testnets) | Signing service with policies, reservations, limits, user cashouts, merchant payouts, nonce manager, approvals |
+| 3. Liquidity | Merchant liquidity accounts, allocation service and priority policy, liquidity monitor, hot/warm/cold rebalancing |
+| 4. Live beta | Mainnet, AML screening, reconciliation jobs, alerting, admin console, pilot merchants, legal sign-off |
+| 5. Cross-chain exchange | Provider integration, quotes, two-leg tracking, recovery workflow |
 
-## 10. Open questions
-1. End-user balances: merchant-level balance with `customer_reference` tracking (proposed), or per-end-user balances held in our ledger?
-2. Custody provider for sending cashouts: Fireblocks, Turnkey, Cobo, or self-hosted signing.
+## 13. Open questions
+1. How do merchant liquidity and user cashouts relate? For example, are users the merchant's players, so the merchant's liquidity pays its own users' cashouts, or can one merchant's liquidity pay other merchants' users?
+2. What is a merchant owed back for liquidity it provides (repayment, fees earned) and what happens if a merchant fails?
+3. Custody provider for signing: Fireblocks, Turnkey, Cobo, or self-hosted MPC/HSM.
