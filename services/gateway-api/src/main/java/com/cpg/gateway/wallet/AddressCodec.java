@@ -37,6 +37,18 @@ public final class AddressCodec {
         return Base58.encodeChecked(TRON_PREFIX, accountBytes(publicKey));
     }
 
+    /** Tron Base58Check address from 20 account bytes in hex, with or without the 0x41 prefix byte. */
+    public static String tronFromHex(String hex) {
+        String digits = hex.startsWith("0x") ? hex.substring(2) : hex;
+        if (digits.length() == 42 && digits.startsWith("41")) {
+            digits = digits.substring(2);
+        }
+        if (!digits.matches("[0-9a-fA-F]{40}")) {
+            throw new IllegalArgumentException("not a Tron account: " + hex);
+        }
+        return Base58.encodeChecked(TRON_PREFIX, HexFormat.of().parseHex(digits));
+    }
+
     /** Normalises an EVM address for comparison and storage lookups. */
     public static String normalizeEvm(String address) {
         String hex = address.startsWith("0x") || address.startsWith("0X") ? address.substring(2) : address;

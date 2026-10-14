@@ -4,7 +4,10 @@ import com.cpg.common.ApiException;
 import com.cpg.common.Ids;
 import com.cpg.gateway.audit.AuditLog;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -112,6 +115,19 @@ public class DepositAddressService {
     public Optional<DepositAddress> findByAddress(String chainCode, String address) {
         return jdbc.sql("SELECT * FROM deposit_addresses WHERE chain_code = :c AND address = :a")
                 .param("c", chainCode).param("a", address).query(MAPPER).optional();
+    }
+
+    /** The subset of {@code candidates} that are our deposit addresses on this chain (one query per chunk). */
+    public Set<String> ownedAmong(String chainCode, Collection<String> candidates) {
+        Set<String> owned = new HashSet<>();
+        List<String> all = List.copyOf(candidates);
+        for (int from = 0; from < all.size(); from += 5_000) {
+            owned.addAll(jdbc.sql("SELECT address FROM deposit_addresses WHERE chain_code = :c AND address IN (:a)")
+                    .param("c", chainCode)
+                    .param("a", all.subList(from, Math.min(all.size(), from + 5_000)))
+                    .query(String.class).list());
+        }
+        return owned;
     }
 
     public List<DepositAddress> listForOwner(OwnerType ownerType, String ownerId) {

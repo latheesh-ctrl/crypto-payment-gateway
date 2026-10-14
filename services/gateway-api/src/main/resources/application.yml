@@ -56,3 +56,34 @@ gateway:
         xpub: ${WALLET_BSC_XPUB:}
       ARBITRUM:
         xpub: ${WALLET_ARBITRUM_XPUB:}
+  # Chain watchers. Each chain scans one provider (rpc-url) and credits a deposit only after every provider in
+  # verify-rpc-urls (comma-separated, each different from rpc-url) independently confirms it.
+  indexer:
+    chains:
+      TRON:
+        enabled: ${INDEXER_TRON_ENABLED:false}
+        rpc-url: ${INDEXER_TRON_RPC_URL:}
+        api-key: ${INDEXER_TRON_API_KEY:}
+        verify-rpc-urls: ${INDEXER_TRON_VERIFY_RPC_URLS:}
+        poll-interval: 3s
+      ETHEREUM:
+        enabled: ${INDEXER_ETHEREUM_ENABLED:false}
+        rpc-url: ${INDEXER_ETHEREUM_RPC_URL:}
+        verify-rpc-urls: ${INDEXER_ETHEREUM_VERIFY_RPC_URLS:}
+        poll-interval: 12s
+      BITCOIN:
+        enabled: ${INDEXER_BITCOIN_ENABLED:false}
+        rpc-url: ${INDEXER_BITCOIN_RPC_URL:}
+        verify-rpc-urls: ${INDEXER_BITCOIN_VERIFY_RPC_URLS:}
+        poll-interval: 60s
+      BSC:
+        enabled: ${INDEXER_BSC_ENABLED:false}
+        rpc-url: ${INDEXER_BSC_RPC_URL:}
+        verify-rpc-urls: ${INDEXER_BSC_VERIFY_RPC_URLS:}
+        poll-interval: 3s
+      ARBITRUM:
+        enabled: ${INDEXER_ARBITRUM_ENABLED:false}
+        rpc-url: ${INDEXER_ARBITRUM_RPC_URL:}
+        verify-rpc-urls: ${INDEXER_ARBITRUM_VERIFY_RPC_URLS:}
+        poll-interval: 2s
+        max-blocks-per-poll: 200
