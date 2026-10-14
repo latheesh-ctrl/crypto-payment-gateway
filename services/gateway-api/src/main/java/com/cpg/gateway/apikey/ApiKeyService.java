@@ -1,16 +1,19 @@
 package com.cpg.gateway.apikey;
 
 import com.cpg.common.Ids;
+import com.cpg.gateway.audit.AuditLog;
 import com.cpg.gateway.config.GatewayProperties;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Issues and verifies secret API keys of the form {@code sk_<mode>_<43 base64url chars>} (256 bits of entropy).
@@ -25,16 +28,19 @@ public class ApiKeyService {
 
     private final JdbcClient jdbc;
     private final GatewayProperties properties;
+    private final AuditLog audit;
     private final SecretKeySpec pepper;
 
-    public ApiKeyService(JdbcClient jdbc, GatewayProperties properties) {
+    public ApiKeyService(JdbcClient jdbc, GatewayProperties properties, AuditLog audit) {
         this.jdbc = jdbc;
         this.properties = properties;
+        this.audit = audit;
         this.pepper = new SecretKeySpec(
                 properties.security().apiKeyPepper().getBytes(StandardCharsets.UTF_8), "HmacSHA256");
     }
 
-    public IssuedApiKey issue(String merchantId, String name) {
+    @Transactional
+    public IssuedApiKey issue(String merchantId, String name, AuditLog.Actor actor) {
         String mode = properties.mode().name();
         byte[] random = new byte[32];
         RANDOM.nextBytes(random);
@@ -53,6 +59,7 @@ public class ApiKeyService {
                 .param("hash", hash(secret))
                 .param("last4", last4)
                 .update();
+        audit.record(actor, "api_key.created", "api_key", id, merchantId, Map.of("mode", mode, "last4", last4));
         return new IssuedApiKey(id, merchantId, mode, name.strip(), secret, last4);
     }
 

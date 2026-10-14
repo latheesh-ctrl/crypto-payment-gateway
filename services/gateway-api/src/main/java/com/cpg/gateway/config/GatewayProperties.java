@@ -12,14 +12,25 @@ import org.springframework.validation.annotation.Validated;
  */
 @Validated
 @ConfigurationProperties("gateway")
-public record GatewayProperties(@NotNull @DefaultValue("test") Mode mode, @NotNull Security security) {
+public record GatewayProperties(
+        @NotNull @DefaultValue("test") Mode mode,
+        @NotNull Security security,
+        @NotNull @DefaultValue Webhooks webhooks) {
 
     public enum Mode { test, live }
 
     /**
      * @param apiKeyPepper server-side secret mixed into API key hashes
      * @param adminToken   temporary bootstrap credential for {@code /internal/**}; blank disables those routes
+     * @param dataEncryptionKey base64 AES-256 key for secrets the platform must read back (webhook secrets)
      */
-    public record Security(@NotBlank String apiKeyPepper, String adminToken) {
+    public record Security(@NotBlank String apiKeyPepper, String adminToken, @NotBlank String dataEncryptionKey) {
+    }
+
+    /**
+     * @param schedulerEnabled run the dispatch and delivery loops in this process
+     * @param maxAttempts      deliveries are abandoned after this many failed attempts (about three days)
+     */
+    public record Webhooks(@DefaultValue("true") boolean schedulerEnabled, @DefaultValue("16") int maxAttempts) {
     }
 }

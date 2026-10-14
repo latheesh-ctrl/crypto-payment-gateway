@@ -16,6 +16,13 @@ public record AccountRef(AccountKind kind, String ownerId, String assetId) {
         }
     }
 
+    public static AccountRef user(AccountKind kind, String userId, String assetId) {
+        if (kind.owner() != AccountKind.Owner.USER) {
+            throw new IllegalArgumentException(kind + " is not a user account");
+        }
+        return new AccountRef(kind, userId, assetId);
+    }
+
     public static AccountRef merchant(AccountKind kind, String merchantId, String assetId) {
         return new AccountRef(kind, merchantId, assetId);
     }

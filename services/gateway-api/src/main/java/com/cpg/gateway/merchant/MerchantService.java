@@ -2,6 +2,8 @@ package com.cpg.gateway.merchant;
 
 import com.cpg.common.ApiException;
 import com.cpg.common.Ids;
+import com.cpg.gateway.audit.AuditLog;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.RowMapper;
@@ -22,13 +24,15 @@ public class MerchantService {
             rs.getTimestamp("created_at").toInstant());
 
     private final JdbcClient jdbc;
+    private final AuditLog audit;
 
-    public MerchantService(JdbcClient jdbc) {
+    public MerchantService(JdbcClient jdbc, AuditLog audit) {
         this.jdbc = jdbc;
+        this.audit = audit;
     }
 
     @Transactional
-    public Merchant create(String name, String email, String country) {
+    public Merchant create(String name, String email, String country, AuditLog.Actor actor) {
         String id = Ids.next("mch");
         try {
             jdbc.sql("INSERT INTO merchants (id, name, email, country) VALUES (:id, :name, :email, :country)")
@@ -40,7 +44,9 @@ public class MerchantService {
         } catch (DuplicateKeyException e) {
             throw ApiException.conflict("email_taken", "A merchant with this email already exists");
         }
-        return find(id).orElseThrow();
+        Merchant merchant = find(id).orElseThrow();
+        audit.record(actor, "merchant.created", "merchant", id, id, Map.of("email", merchant.email()));
+        return merchant;
     }
 
     public Optional<Merchant> find(String id) {

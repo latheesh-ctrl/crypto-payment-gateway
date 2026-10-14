@@ -25,11 +25,19 @@ public class OutboxWriter {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void write(String aggregateType, String aggregateId, String eventType, Map<String, ?> payload) {
+        write(null, aggregateType, aggregateId, eventType, payload);
+    }
+
+    /** Records an event that concerns one merchant; it is delivered to that merchant's webhook endpoints. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void write(String merchantId, String aggregateType, String aggregateId, String eventType,
+                      Map<String, ?> payload) {
         jdbc.sql("""
-                        INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload)
-                        VALUES (:id, :aggregateType, :aggregateId, :eventType, CAST(:payload AS jsonb))
+                        INSERT INTO outbox_events (id, merchant_id, aggregate_type, aggregate_id, event_type, payload)
+                        VALUES (:id, :merchantId, :aggregateType, :aggregateId, :eventType, CAST(:payload AS jsonb))
                         """)
                 .param("id", Ids.next("evt"))
+                .param("merchantId", merchantId)
                 .param("aggregateType", aggregateType)
                 .param("aggregateId", aggregateId)
                 .param("eventType", eventType)
