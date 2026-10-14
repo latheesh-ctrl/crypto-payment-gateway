@@ -3,6 +3,7 @@ package com.cpg.gateway.merchant;
 import com.cpg.common.ApiException;
 import com.cpg.common.Ids;
 import com.cpg.gateway.audit.AuditLog;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
@@ -21,6 +22,9 @@ public class MerchantService {
             rs.getString("status"),
             rs.getString("kyc_status"),
             rs.getString("country"),
+            rs.getString("player_balances"),
+            rs.getBoolean("require_signed_requests"),
+            rs.getInt("rate_limit_per_second"),
             rs.getTimestamp("created_at").toInstant());
 
     private final JdbcClient jdbc;
@@ -47,6 +51,41 @@ public class MerchantService {
         Merchant merchant = find(id).orElseThrow();
         audit.record(actor, "merchant.created", "merchant", id, id, Map.of("email", merchant.email()));
         return merchant;
+    }
+
+    /** Updates operator-controlled settings; null leaves a setting unchanged. */
+    @Transactional
+    public Merchant updateSettings(String id, String playerBalances, Boolean requireSignedRequests,
+                                   Integer rateLimitPerSecond, AuditLog.Actor actor) {
+        Merchant before = require(id);
+        jdbc.sql("""
+                        UPDATE merchants SET
+                            player_balances = COALESCE(:balances, player_balances),
+                            require_signed_requests = COALESCE(:signed, require_signed_requests),
+                            rate_limit_per_second = COALESCE(:rate, rate_limit_per_second),
+                            updated_at = now()
+                        WHERE id = :id
+                        """)
+                .param("balances", playerBalances)
+                .param("signed", requireSignedRequests)
+                .param("rate", rateLimitPerSecond)
+                .param("id", id)
+                .update();
+        Merchant after = require(id);
+        Map<String, Object> changes = new LinkedHashMap<>();
+        if (!before.playerBalances().equals(after.playerBalances())) {
+            changes.put("player_balances", after.playerBalances());
+        }
+        if (before.requireSignedRequests() != after.requireSignedRequests()) {
+            changes.put("require_signed_requests", after.requireSignedRequests());
+        }
+        if (before.rateLimitPerSecond() != after.rateLimitPerSecond()) {
+            changes.put("rate_limit_per_second", after.rateLimitPerSecond());
+        }
+        if (!changes.isEmpty()) {
+            audit.record(actor, "merchant.settings_updated", "merchant", id, id, changes);
+        }
+        return after;
     }
 
     public Optional<Merchant> find(String id) {
