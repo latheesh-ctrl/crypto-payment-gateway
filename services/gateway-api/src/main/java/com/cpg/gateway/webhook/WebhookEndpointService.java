@@ -56,9 +56,7 @@ public class WebhookEndpointService {
             throw ApiException.badRequest("too_many_webhook_endpoints",
                     "At most " + MAX_ENDPOINTS_PER_MERCHANT + " enabled webhook endpoints are allowed");
         }
-        byte[] raw = new byte[32];
-        RANDOM.nextBytes(raw);
-        String secret = "whsec_" + HexFormat.of().formatHex(raw);
+        String secret = newSecret();
         String id = Ids.next("we");
         jdbc.sql("""
                         INSERT INTO webhook_endpoints (id, merchant_id, url, secret_encrypted, event_types)
@@ -86,6 +84,32 @@ public class WebhookEndpointService {
                 .orElseThrow(() -> ApiException.notFound("Webhook endpoint"));
     }
 
+    /**
+     * Issues a new signing secret. The previous one keeps signing alongside it for {@code overlap}, so the merchant
+     * can deploy the new secret without rejecting deliveries in between.
+     */
+    @Transactional
+    public Created rotateSecret(String merchantId, String id, java.time.Duration overlap, AuditLog.Actor actor) {
+        if (overlap.isNegative() || overlap.compareTo(java.time.Duration.ofDays(7)) > 0) {
+            throw ApiException.badRequest("invalid_overlap", "Overlap must be between 0 and 7 days");
+        }
+        require(merchantId, id);
+        String secret = newSecret();
+        jdbc.sql("""
+                        UPDATE webhook_endpoints
+                        SET previous_secret_encrypted = secret_encrypted,
+                            previous_secret_expires_at = now() + CAST(:overlap AS interval),
+                            secret_encrypted = :secret
+                        WHERE merchant_id = :m AND id = :id
+                        """)
+                .param("overlap", overlap.toSeconds() + " seconds")
+                .param("secret", cipher.encrypt(secret))
+                .param("m", merchantId).param("id", id).update();
+        audit.record(actor, "webhook_endpoint.secret_rotated", "webhook_endpoint", id, merchantId,
+                Map.of("overlap_seconds", overlap.toSeconds()));
+        return new Created(require(merchantId, id), secret);
+    }
+
     @Transactional
     public WebhookEndpoint disable(String merchantId, String id, AuditLog.Actor actor) {
         require(merchantId, id);
@@ -93,6 +117,12 @@ public class WebhookEndpointService {
                 .param("m", merchantId).param("id", id).update();
         audit.record(actor, "webhook_endpoint.disabled", "webhook_endpoint", id, merchantId, Map.of());
         return require(merchantId, id);
+    }
+
+    private static String newSecret() {
+        byte[] raw = new byte[32];
+        RANDOM.nextBytes(raw);
+        return "whsec_" + HexFormat.of().formatHex(raw);
     }
 
     private void validateUrl(String url) {

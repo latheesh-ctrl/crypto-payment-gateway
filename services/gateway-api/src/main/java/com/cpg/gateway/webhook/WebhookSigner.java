@@ -8,7 +8,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Signature header: {@code CPG-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, t + "." + body)>}.
- * Merchants verify the HMAC and reject timestamps older than five minutes to stop replays.
+ * Merchants verify the HMAC and reject timestamps older than five minutes to stop replays. While a secret is being
+ * rotated the header carries a {@code v1} for the new and the previous secret; a match with either is valid.
  */
 public final class WebhookSigner {
 
@@ -19,6 +20,11 @@ public final class WebhookSigner {
 
     public static String header(String secret, long timestampSeconds, byte[] body) {
         return "t=" + timestampSeconds + ",v1=" + sign(secret, timestampSeconds, body);
+    }
+
+    /** During secret rotation: one {@code v1} per secret, so the merchant can verify with either. */
+    public static String header(String secret, String previousSecret, long timestampSeconds, byte[] body) {
+        return header(secret, timestampSeconds, body) + ",v1=" + sign(previousSecret, timestampSeconds, body);
     }
 
     public static String sign(String secret, long timestampSeconds, byte[] body) {

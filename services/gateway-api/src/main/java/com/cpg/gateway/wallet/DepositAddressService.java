@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class DepositAddressService {
 
-    public enum OwnerType { user, merchant }
+    public enum OwnerType { user, merchant, session }
 
     public record DepositAddress(String id, String merchantId, OwnerType ownerType, String ownerId, String chain,
                                  String address, long derivationIndex, Instant createdAt) {

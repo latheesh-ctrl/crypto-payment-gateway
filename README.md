@@ -87,6 +87,7 @@ Integration tests start PostgreSQL with Testcontainers, so Docker must be runnin
 | `GATEWAY_MODE` | `test` (sandbox, accepts `sk_test_` keys) or `live` |
 | `DATA_ENCRYPTION_KEY` | Base64 AES-256 key encrypting webhook secrets at rest (required outside local dev) |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | Set to `native` behind a trusted load balancer so API key IP allowlists see the client address |
+| `CHECKOUT_BASE_URL` | Origin of the hosted payment page (payment URLs and CORS), e.g. `https://pay.example.com` |
 | `JOBS_ENABLED` | Run background loops (webhook delivery, chain watchers, deposit verification retries) in this instance (default `true`) |
 | `WALLET_<CHAIN>_XPUB` | Account-level extended public key per chain for deposit addresses (TRON, ETHEREUM, BITCOIN, BSC, ARBITRUM). Never a private key. |
 | `INDEXER_<CHAIN>_ENABLED` | Scan this chain for deposits (default `false`) |
