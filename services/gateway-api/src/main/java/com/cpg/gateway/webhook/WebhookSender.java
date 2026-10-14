@@ -52,8 +52,8 @@ public class WebhookSender {
         this.clock = Clock.systemUTC();
     }
 
-    record Due(String deliveryId, int attempts, String url, byte[] secret, String eventId, String eventType,
-               String payload, java.time.Instant createdAt) {
+    record Due(String deliveryId, int attempts, String url, byte[] secret, byte[] previousSecret, String eventId,
+               String eventType, String payload, java.time.Instant createdAt) {
     }
 
     /** @return number of deliveries attempted */
@@ -69,13 +69,15 @@ public class WebhookSender {
                                 LIMIT :limit
                                 FOR UPDATE SKIP LOCKED)
                           AND e.id = d.endpoint_id AND ev.id = d.event_id
-                        RETURNING d.id, d.attempts, e.url, e.secret_encrypted, ev.id, ev.event_type,
-                                  ev.payload::text, ev.created_at
+                        RETURNING d.id, d.attempts, e.url, e.secret_encrypted,
+                                  CASE WHEN e.previous_secret_expires_at > now() THEN e.previous_secret_encrypted END,
+                                  ev.id, ev.event_type, ev.payload::text, ev.created_at
                         """)
                 .param("lease", LEASE.toSeconds() + " seconds")
                 .param("limit", limit)
                 .query((rs, i) -> new Due(rs.getString(1), rs.getInt(2), rs.getString(3), rs.getBytes(4),
-                        rs.getString(5), rs.getString(6), rs.getString(7), rs.getTimestamp(8).toInstant()))
+                        rs.getBytes(5), rs.getString(6), rs.getString(7), rs.getString(8),
+                        rs.getTimestamp(9).toInstant()))
                 .list();
         due.forEach(this::attempt);
         return due.size();
@@ -84,6 +86,7 @@ public class WebhookSender {
     private void attempt(Due d) {
         Integer statusCode = null;
         String error = null;
+        long started = System.nanoTime();
         try {
             URI uri = URI.create(d.url());
             guardAgainstInternalTargets(uri);
@@ -94,7 +97,9 @@ public class WebhookSender {
                     .header("Content-Type", "application/json")
                     .header("User-Agent", "CPG-Webhooks/1.0")
                     .header("CPG-Event-Id", d.eventId())
-                    .header(WebhookSigner.HEADER, WebhookSigner.header(cipher.decrypt(d.secret()), ts, body))
+                    .header(WebhookSigner.HEADER, d.previousSecret() == null
+                            ? WebhookSigner.header(cipher.decrypt(d.secret()), ts, body)
+                            : WebhookSigner.header(cipher.decrypt(d.secret()), cipher.decrypt(d.previousSecret()), ts, body))
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                     .build();
             statusCode = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
@@ -106,6 +111,14 @@ public class WebhookSender {
         }
 
         int attempts = d.attempts() + 1;
+        jdbc.sql("""
+                        INSERT INTO webhook_delivery_attempts (delivery_id, attempt, status_code, error, duration_ms)
+                        VALUES (:id, :attempt, :code, :error, :ms)
+                        """)
+                .param("id", d.deliveryId()).param("attempt", attempts).param("code", statusCode)
+                .param("error", error == null ? null : truncate(error))
+                .param("ms", (int) Math.min(Integer.MAX_VALUE, (System.nanoTime() - started) / 1_000_000))
+                .update();
         if (statusCode != null && statusCode >= 200 && statusCode < 300) {
             jdbc.sql("""
                             UPDATE webhook_deliveries SET status = 'succeeded', attempts = :a, last_status_code = :code,

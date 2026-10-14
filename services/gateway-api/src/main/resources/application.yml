@@ -42,6 +42,9 @@ gateway:
     data-encryption-key: ${DATA_ENCRYPTION_KEY:ZGV2LW9ubHktZGF0YS1lbmNyeXB0aW9uLWtleS0zMmI=}
   jobs:
     enabled: ${JOBS_ENABLED:true}
+  checkout:
+    # Origin of the hosted payment page; payment URLs point here and only this origin may call the checkout API.
+    base-url: ${CHECKOUT_BASE_URL:http://localhost:3000}
   # Deposit address derivation: account-level extended PUBLIC keys only, from the custody provider or HSM.
   wallets:
     chains:

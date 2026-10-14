@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -68,14 +69,16 @@ public class DepositService {
     private final LedgerService ledger;
     private final OutboxWriter outbox;
     private final TransferVerifier verifier;
+    private final ApplicationEventPublisher events;
 
     public DepositService(JdbcClient jdbc, DepositAddressService addresses, LedgerService ledger, OutboxWriter outbox,
-                          TransferVerifier verifier) {
+                          TransferVerifier verifier, ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.addresses = addresses;
         this.ledger = ledger;
         this.outbox = outbox;
         this.verifier = verifier;
+        this.events = events;
     }
 
     // ---- Chain events ----------------------------------------------------------------------------------------
@@ -226,6 +229,7 @@ public class DepositService {
                 .update();
         if (d.status().equals("detected") && confirmations >= 1) {
             transition(d.id(), "detected", "confirming", null);
+            events.publishEvent(new DepositChanged(require(d.id())));
         }
         if (confirmations >= d.requiredConfirmations()) {
             tryComplete(require(d.id()));
@@ -251,6 +255,7 @@ public class DepositService {
                 // investigates and posts a compensating entry if needed.
                 log.error("Completed deposit {} reported as reorged on {}: {}", d.id(), chain, reason);
                 transition(d.id(), "completed", "needs_review", "reorg after completion: " + reason);
+                event(require(d.id()), "deposit.needs_review");
             }
             default -> {
                 // reversed, unsupported, needs_review: nothing further to do
@@ -286,11 +291,14 @@ public class DepositService {
             transition(d.id(), "detected", "confirming", null);
         }
         BigInteger amount = d.amount();
-        boolean userDeposit = d.ownerType().equals("user");
-        // Merchants that keep player balances themselves (games) get the deposit as liquidity only; the player's
-        // credit happens in the merchant's own wallet when it receives deposit.completed.
-        boolean platformKeepsPlayerBalance = userDeposit && !merchantManagedBalances(d.merchantId());
-        BigInteger fee = userDeposit ? amount.multiply(BigInteger.valueOf(depositFeeBps(d.merchantId())))
+        // Player money (a user deposit or a payment session) carries the merchant's deposit fee; a merchant
+        // topping up its own liquidity does not.
+        boolean playerDeposit = !d.ownerType().equals("merchant");
+        // Only user deposits of platform-managed merchants create a player balance here. Merchants that keep player
+        // balances themselves (games), and every payment session, get liquidity only; the player is credited in
+        // the merchant's own wallet when it receives the webhook.
+        boolean platformKeepsPlayerBalance = d.ownerType().equals("user") && !merchantManagedBalances(d.merchantId());
+        BigInteger fee = playerDeposit ? amount.multiply(BigInteger.valueOf(depositFeeBps(d.merchantId())))
                 .divide(BigInteger.valueOf(10_000)) : BigInteger.ZERO;
         String asset = d.assetId();
 
@@ -304,7 +312,12 @@ public class DepositService {
                     AccountRef.merchant(AccountKind.MERCHANT_USER_OBLIGATIONS, d.merchantId(), asset), amount));
             entries.add(Posting.Entry.credit(AccountRef.user(AccountKind.USER_AVAILABLE, d.ownerId(), asset), amount));
         }
-        LedgerService.Result posted = ledger.post(new Posting(userDeposit ? "user_deposit" : "merchant_payin",
+        String postingType = switch (d.ownerType()) {
+            case "user" -> "user_deposit";
+            case "session" -> "session_payment";
+            default -> "merchant_payin";
+        };
+        LedgerService.Result posted = ledger.post(new Posting(postingType,
                 "deposit:" + d.chain() + ":" + d.txHash() + ":" + d.outputIndex(),
                 "Deposit " + d.id(), entries));
 
@@ -404,6 +417,7 @@ public class DepositService {
 
     private void event(Deposit d, String type) {
         outbox.write(d.merchantId(), "deposit", d.id(), type, DepositView.of(d, decimals(d.assetId())).toMap());
+        events.publishEvent(new DepositChanged(d));
     }
 
     int decimals(String assetId) {

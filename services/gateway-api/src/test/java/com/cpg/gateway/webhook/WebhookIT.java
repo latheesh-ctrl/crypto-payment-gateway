@@ -173,4 +173,65 @@ class WebhookIT {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("invalid_url"));
     }
+
+    @Test
+    void rotatedSecretSignsAlongsideThePreviousOneDuringTheOverlap() throws Exception {
+        String oldSecret = registerEndpoint("[\"user.created\"]");
+        String id = json.readTree(mvc.perform(merchant.authorize(get("/v1/webhook_endpoints")))
+                .andReturn().getResponse().getContentAsString()).get("data").get(0).get("id").asString();
+        String newSecret = json.readTree(mvc.perform(merchant.post("/v1/webhook_endpoints/" + id + "/rotate_secret",
+                        "{\"overlap_hours\":1}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString()).get("secret").asString();
+        assertThat(newSecret).isNotEqualTo(oldSecret);
+
+        createUser("rotating");
+        dispatcher.dispatchBatch(100);
+        sender.sendDue(50);
+        Received r = received.getFirst();
+        String[] parts = r.signature().split(",");
+        long ts = Long.parseLong(parts[0].substring(2));
+        assertThat(parts).containsExactly("t=" + ts, "v1=" + WebhookSigner.sign(newSecret, ts, r.body()),
+                "v1=" + WebhookSigner.sign(oldSecret, ts, r.body()));
+
+        // After the overlap only the new secret signs.
+        jdbc.sql("UPDATE webhook_endpoints SET previous_secret_expires_at = now() WHERE id = :id").param("id", id).update();
+        createUser("rotated");
+        dispatcher.dispatchBatch(100);
+        sender.sendDue(50);
+        assertThat(received.get(1).signature().split(",")).hasSize(2);
+    }
+
+    @Test
+    void eventLogShowsEveryAttemptAndCanRedeliver() throws Exception {
+        registerEndpoint("[\"*\"]");
+        responseCode.set(503);
+        createUser("logged");
+        dispatcher.dispatchBatch(100);
+        sender.sendDue(50);
+
+        JsonNode list = json.readTree(mvc.perform(merchant.authorize(get("/v1/webhook_events").param("type", "user.created")))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String eventId = list.get("data").get(0).get("id").asString();
+        assertThat(list.get("data").get(0).get("data").get("external_ref").asString()).isEqualTo("logged");
+
+        mvc.perform(merchant.authorize(get("/v1/webhook_events/" + eventId)))
+                .andExpect(jsonPath("$.deliveries[0].status").value("pending"))
+                .andExpect(jsonPath("$.deliveries[0].attempts").value(1))
+                .andExpect(jsonPath("$.deliveries[0].attempt_log[0].status_code").value(503));
+
+        // The merchant fixes its endpoint and asks for the event again without waiting for the backoff.
+        responseCode.set(200);
+        mvc.perform(merchant.post("/v1/webhook_events/" + eventId + "/redeliver", ""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deliveries[0].attempts").value(0));
+        assertThat(sender.sendDue(50)).isEqualTo(1);
+        mvc.perform(merchant.authorize(get("/v1/webhook_events/" + eventId)))
+                .andExpect(jsonPath("$.deliveries[0].status").value("succeeded"))
+                .andExpect(jsonPath("$.deliveries[0].attempt_log.length()").value(2));
+
+        // Another merchant cannot see it.
+        TestMerchants.Onboarded other = TestMerchants.onboard(mvc, json);
+        mvc.perform(other.authorize(get("/v1/webhook_events/" + eventId))).andExpect(status().isNotFound());
+    }
 }

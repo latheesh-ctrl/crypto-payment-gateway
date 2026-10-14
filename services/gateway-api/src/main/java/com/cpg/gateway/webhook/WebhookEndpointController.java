@@ -50,6 +50,21 @@ public class WebhookEndpointController {
         return endpoints.disable(merchant.merchantId(), id, AuditLog.Actor.merchantKey(merchant.apiKeyId()));
     }
 
+    /** The new secret is returned only in this response; the old one keeps signing for {@code overlap_hours}. */
+    @PostMapping("/{id}/rotate_secret")
+    public CreatedResponse rotateSecret(@AuthenticationPrincipal MerchantPrincipal merchant, @PathVariable String id,
+                                        @Valid @RequestBody(required = false) RotateRequest request) {
+        int hours = request == null || request.overlapHours() == null ? 24 : request.overlapHours();
+        var rotated = endpoints.rotateSecret(merchant.merchantId(), id, java.time.Duration.ofHours(hours),
+                AuditLog.Actor.merchantKey(merchant.apiKeyId()));
+        WebhookEndpoint e = rotated.endpoint();
+        return new CreatedResponse(e.id(), e.url(), e.eventTypes(), e.status(), e.createdAt(), rotated.secret());
+    }
+
+    public record RotateRequest(@jakarta.validation.constraints.Min(0) @jakarta.validation.constraints.Max(168)
+                                Integer overlapHours) {
+    }
+
     public record CreateRequest(
             @NotBlank @Size(max = 2048) String url,
             @NotEmpty @Size(max = 50)

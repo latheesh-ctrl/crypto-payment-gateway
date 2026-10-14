@@ -9,6 +9,7 @@ public record DepositView(
         String id,
         String type,
         String userId,
+        String paymentSessionId,
         String chain,
         String asset,
         String address,
@@ -24,12 +25,17 @@ public record DepositView(
         Instant detectedAt,
         Instant completedAt) {
 
-    static DepositView of(Deposit d, int decimals) {
+    public static DepositView of(Deposit d, int decimals) {
         String asset = d.assetId() == null ? "unknown" : d.assetId();
         return new DepositView(
                 d.id(),
-                d.ownerType().equals("user") ? "user_deposit" : "merchant_payin",
+                switch (d.ownerType()) {
+                    case "user" -> "user_deposit";
+                    case "session" -> "session_payment";
+                    default -> "merchant_payin";
+                },
                 d.ownerType().equals("user") ? d.ownerId() : null,
+                d.ownerType().equals("session") ? d.ownerId() : null,
                 d.chain(),
                 d.assetId(),
                 d.address(),
@@ -46,9 +52,9 @@ public record DepositView(
                 d.completedAt());
     }
 
-    Map<String, Object> toMap() {
+    public Map<String, Object> toMap() {
         return DepositService.mapOf(
-                "id", id, "type", type, "user_id", userId, "chain", chain, "asset", asset, "address", address,
+                "id", id, "type", type, "user_id", userId, "payment_session_id", paymentSessionId, "chain", chain, "asset", asset, "address", address,
                 "amount", amount, "fee", fee, "tx_hash", txHash, "output_index", outputIndex,
                 "confirmations", confirmations, "required_confirmations", requiredConfirmations, "status", status,
                 "status_reason", statusReason, "simulated", simulated, "detected_at", String.valueOf(detectedAt),
