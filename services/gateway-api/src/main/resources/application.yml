@@ -12,9 +12,6 @@ spring:
       maximum-pool-size: ${DATABASE_POOL_SIZE:20}
   flyway:
     locations: classpath:db/migration
-  mvc:
-    problemdetails:
-      enabled: true
 
 server:
   shutdown: graceful
@@ -32,6 +29,7 @@ management:
         enabled: true
 
 gateway:
+  mode: ${GATEWAY_MODE:test}
   security:
     # Server-side pepper mixed into API key hashes. Must be set from a secret store outside local dev.
     api-key-pepper: ${API_KEY_PEPPER:local-dev-pepper-change-me}
