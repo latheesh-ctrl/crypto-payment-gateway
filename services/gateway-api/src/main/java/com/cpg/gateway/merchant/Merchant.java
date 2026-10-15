@@ -7,10 +7,12 @@ import java.time.Instant;
  *                              {@code merchant_managed} (the merchant, e.g. a game, keeps them)
  * @param requireSignedRequests require request signatures on test keys too (always required on live keys)
  * @param rateLimitPerSecond    sustained request rate allowed per API key
+ * @param depositFeeBps         fee on player deposits, in basis points
+ * @param payoutFeeBps          fee on payouts, in basis points, charged on top of the amount paid out
  */
 public record Merchant(String id, String name, String email, String status, String kycStatus, String country,
                        String playerBalances, boolean requireSignedRequests, int rateLimitPerSecond,
-                       Instant createdAt) {
+                       int depositFeeBps, int payoutFeeBps, Instant createdAt) {
 
     public boolean merchantManagedBalances() {
         return "merchant_managed".equals(playerBalances);

@@ -25,6 +25,8 @@ public class MerchantService {
             rs.getString("player_balances"),
             rs.getBoolean("require_signed_requests"),
             rs.getInt("rate_limit_per_second"),
+            rs.getInt("deposit_fee_bps"),
+            rs.getInt("payout_fee_bps"),
             rs.getTimestamp("created_at").toInstant());
 
     private final JdbcClient jdbc;
@@ -56,19 +58,24 @@ public class MerchantService {
     /** Updates operator-controlled settings; null leaves a setting unchanged. */
     @Transactional
     public Merchant updateSettings(String id, String playerBalances, Boolean requireSignedRequests,
-                                   Integer rateLimitPerSecond, AuditLog.Actor actor) {
+                                   Integer rateLimitPerSecond, Integer depositFeeBps, Integer payoutFeeBps,
+                                   AuditLog.Actor actor) {
         Merchant before = require(id);
         jdbc.sql("""
                         UPDATE merchants SET
                             player_balances = COALESCE(:balances, player_balances),
                             require_signed_requests = COALESCE(:signed, require_signed_requests),
                             rate_limit_per_second = COALESCE(:rate, rate_limit_per_second),
+                            deposit_fee_bps = COALESCE(:depositFee, deposit_fee_bps),
+                            payout_fee_bps = COALESCE(:payoutFee, payout_fee_bps),
                             updated_at = now()
                         WHERE id = :id
                         """)
                 .param("balances", playerBalances)
                 .param("signed", requireSignedRequests)
                 .param("rate", rateLimitPerSecond)
+                .param("depositFee", depositFeeBps)
+                .param("payoutFee", payoutFeeBps)
                 .param("id", id)
                 .update();
         Merchant after = require(id);
@@ -81,6 +88,12 @@ public class MerchantService {
         }
         if (before.rateLimitPerSecond() != after.rateLimitPerSecond()) {
             changes.put("rate_limit_per_second", after.rateLimitPerSecond());
+        }
+        if (before.depositFeeBps() != after.depositFeeBps()) {
+            changes.put("deposit_fee_bps", after.depositFeeBps());
+        }
+        if (before.payoutFeeBps() != after.payoutFeeBps()) {
+            changes.put("payout_fee_bps", after.payoutFeeBps());
         }
         if (!changes.isEmpty()) {
             audit.record(actor, "merchant.settings_updated", "merchant", id, id, changes);

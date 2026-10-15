@@ -6,8 +6,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
  * Per-chain extended public keys for deposit address derivation. Only public keys are configured here: the
- * matching private keys live in the custody provider or HSM, so this service can create addresses but can never
- * move funds.
+ * matching private keys live in the custody provider or HSM, so deriving addresses never needs a key that can move
+ * funds.
  *
  * @param chains keyed by chain code (TRON, ETHEREUM, BITCOIN, BSC, ARBITRUM)
  */

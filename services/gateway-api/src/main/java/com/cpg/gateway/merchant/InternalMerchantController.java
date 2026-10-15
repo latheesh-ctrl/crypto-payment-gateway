@@ -55,7 +55,7 @@ public class InternalMerchantController {
     @PatchMapping("/{id}/settings")
     public Merchant updateSettings(@PathVariable String id, @Valid @RequestBody UpdateSettingsRequest request) {
         return merchants.updateSettings(id, request.playerBalances(), request.requireSignedRequests(),
-                request.rateLimitPerSecond(), OPERATOR);
+                request.rateLimitPerSecond(), request.depositFeeBps(), request.payoutFeeBps(), OPERATOR);
     }
 
     /** Operator-issued keys may carry any scope, including payouts. */
@@ -70,7 +70,9 @@ public class InternalMerchantController {
     public record UpdateSettingsRequest(
             @Pattern(regexp = "platform_managed|merchant_managed") String playerBalances,
             Boolean requireSignedRequests,
-            @Min(1) @Max(10_000) Integer rateLimitPerSecond) {
+            @Min(1) @Max(10_000) Integer rateLimitPerSecond,
+            @Min(0) @Max(10_000) Integer depositFeeBps,
+            @Min(0) @Max(10_000) Integer payoutFeeBps) {
     }
 
     public record CreateMerchantRequest(
