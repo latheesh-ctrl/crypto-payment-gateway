@@ -1,6 +1,6 @@
 # Merchant workflow
 
-Status as of 2026-10-14. The merchant **API** is live (see [api-reference.md](api-reference.md)). The merchant
+Status as of 2026-10-15. Payouts (cashouts) are built in PR #8, pending merge; see [payouts.md](payouts.md). The merchant **API** is live (see [api-reference.md](api-reference.md)). The merchant
 **dashboard** is planned (Next.js, React, TypeScript, Tailwind, shadcn/ui); section 4 describes how it is meant to
 work so it can be designed and built against the existing API.
 
@@ -13,7 +13,7 @@ flowchart LR
     C --> D[4. Fund<br/>liquidity]
     D --> E[5. Go live]
     E --> F[6. Daily operations]
-    F --> G[7. Cashouts and<br/>payouts - planned]
+    F --> G[7. Cashouts<br/>PR #8]
 ```
 
 | Step | What the merchant does | How today | In the planned dashboard |
@@ -24,7 +24,7 @@ flowchart LR
 | 4. Fund liquidity | Pre-funds what pays its players' cashouts | `POST /v1/payin_addresses`, send crypto, check `GET /v1/liquidity` | Liquidity page with pay-in address and QR |
 | 5. Go live | Live key, signed requests, IP allowlist for payouts | Operator issues `sk_live_` key | Live/test switch, go-live checklist |
 | 6. Operate | Watches deposits, sessions, webhooks, balances | `GET` endpoints and webhook log | Home, Payments, Players, Webhooks pages |
-| 7. Cash out | Pays players and withdraws its own funds | Not built (Phase 2c) | Cashouts and Payouts pages |
+| 7. Cash out | Pays players; later withdraws its own funds | `POST /v1/payouts` with a `payouts:write` key (PR #8, `merchant_managed` only, EVM chains); merchant payouts planned | Cashouts and Payouts pages |
 
 ## 2. Integrating deposits (live)
 
@@ -74,6 +74,8 @@ Set `player_balances = merchant_managed` (ask an operator) so the gateway does n
 | Rotate a webhook secret | `POST /v1/webhook_endpoints/{id}/rotate_secret {"overlap_hours": 24}` |
 | Rotate an API key | `POST /v1/api_keys/{id}/roll`, deploy, confirm `last_used_at` of the old key stops, then let it expire or revoke |
 | Revoke a leaked key | `POST /v1/api_keys/{id}/revoke` (immediate) |
+| Pay a player (PR #8) | Debit the player in your wallet, `POST /v1/payouts`, finalise on `payout.completed`, return the amount on `payout.failed` or `payout.cancelled` |
+| Payouts waiting or stuck (PR #8) | `GET /v1/payouts?status=awaiting_liquidity` (top up liquidity), `GET /v1/payouts?status=needs_review` (wait; operations resolves) |
 
 `needs_review` sessions and deposits are handled by platform operations, who contact the merchant. A wrong-asset or
 unsupported-token deposit is never credited automatically.
@@ -105,7 +107,7 @@ written to the audit log.
 | Payments | Sessions and deposits with filters (status, network, asset, player, order ID, date), detail drawer with tx hashes and explorer links, status history | Cancel an open session, copy payment link, export CSV (planned API) | `/v1/payment_sessions`, `/v1/deposits` (live) |
 | Players | Players by `external_ref`, their addresses, deposits and (platform-managed) balances | Create player, show address | `/v1/users`, `/v1/users/{id}/…` (live) |
 | Liquidity | Available, allocated and owed per asset; pay-in addresses with QR; pay-in history; low-balance alert threshold | Get pay-in address, set alert threshold (planned) | `/v1/liquidity`, `/v1/payin_addresses`, `/v1/deposits?type=merchant_payin` (live) |
-| Cashouts | Player cashouts with status, tx hash, `awaiting_liquidity` queue | Cancel before signing | `/v1/payouts` (planned, Phase 2c) |
+| Cashouts | Player cashouts with status, fee, tx hash and explorer link, `awaiting_liquidity` queue | Cancel before signing | `/v1/payouts` (PR #8) |
 | Payouts | Merchant's own withdrawals, whitelisted addresses with cool-down | Request payout, add address (2FA, cool-down, approvals) | Planned |
 | Webhooks | Endpoints, event log, every delivery attempt with status code and duration | Add, disable, rotate secret, redeliver, send test event (planned) | `/v1/webhook_endpoints`, `/v1/webhook_events` (live) |
 | Developers | API keys with scopes, allowlist, last used; request signing guide; OpenAPI docs | Create, roll, revoke keys | `/v1/api_keys` (live) |

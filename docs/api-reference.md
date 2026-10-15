@@ -1,7 +1,8 @@
 # API reference
 
-Status as of 2026-10-14 (code on `main` through PR #6). Every endpoint in sections 2 to 5 is **live**. Section 7
-lists endpoints that are **planned** and not built yet.
+Status as of 2026-10-15 (code on `main` through PR #6). Every endpoint in sections 2 to 5 is **live**, except the
+payout endpoints (section 2.11 and the payout routes in section 4), which are built in PR #8 and live once it merges.
+Section 7 lists endpoints that are **planned** and not built yet.
 
 Contents:
 1. [Conventions](#1-conventions)
@@ -40,7 +41,7 @@ Contents:
   the asset's `decimals` places.
 - Timestamps are ISO 8601 UTC strings.
 - IDs are prefixed ULIDs: `mch_` merchant, `key_` API key, `usr_` user, `addr_` address, `dep_` deposit,
-  `ps_` payment session, `we_` webhook endpoint, `evt_` event, `whd_` webhook delivery, `ltx_` ledger transaction.
+  `ps_` payment session, `po_` payout, `we_` webhook endpoint, `evt_` event, `whd_` webhook delivery, `ltx_` ledger transaction.
 - Assets are identified as `SYMBOL_CHAIN`, for example `USDT_TRON`, `USDC_ARBITRUM`, `BTC_BITCOIN`.
 - Chains (networks): `TRON`, `ETHEREUM`, `BITCOIN`, `BSC`, `ARBITRUM`.
 
@@ -71,7 +72,7 @@ Each route needs a scope on the API key. New keys get every scope except `payout
 | `deposits:write` | Every other `POST`/`PATCH` under `/v1/**` (users, addresses, payment sessions, sandbox) |
 | `webhooks:manage` | All of `/v1/webhook_endpoints/**` and `/v1/webhook_events/**` (including `GET`) |
 | `keys:manage` | All of `/v1/api_keys/**` (including `GET`) |
-| `payouts:write` | `POST /v1/payouts/**` (planned endpoints) |
+| `payouts:write` | `POST /v1/payouts/**` (PR #8). `GET /v1/payouts/**` needs `read` |
 
 ### Rate limits
 
@@ -114,6 +115,10 @@ Quick index:
 | `POST /v1/api_keys` | keys:manage | Create a key |
 | `POST /v1/api_keys/{id}/roll` | keys:manage | Replace a key with overlap |
 | `POST /v1/api_keys/{id}/revoke` | keys:manage | Revoke a key now |
+| `POST /v1/payouts` | payouts:write | Pay a player from merchant liquidity (PR #8) |
+| `GET /v1/payouts` | read | List or find payouts (PR #8) |
+| `GET /v1/payouts/{id}` | read | One payout (PR #8) |
+| `POST /v1/payouts/{id}/cancel` | payouts:write | Cancel before signing (PR #8) |
 
 ### 2.1 Assets
 
@@ -155,7 +160,7 @@ What funds the merchant's players' cashouts.
 | Field | Meaning |
 |---|---|
 | `available` | Liquidity free to fund cashouts (pay-ins plus confirmed player deposits, minus deposit fees) |
-| `allocated` | Earmarked for cashouts in flight (used once cashouts ship) |
+| `allocated` | Earmarked for cashouts in flight (payouts reserved but not yet final, PR #8) |
 | `owed_to_users` | Sum of the merchant's players' balances (`platform_managed` merchants only; 0 for `merchant_managed`) |
 
 ### 2.3 Users (players)
@@ -382,6 +387,57 @@ Body optional: `{"overlap_hours": 24}` (0 to 168). `201` with a new key; the old
 
 Immediate. `409 key_inactive` if already revoked or expired.
 
+### 2.11 Payouts (cashouts)
+
+**Built, pending merge in PR #8.** Full guide: [payouts.md](payouts.md). Only for merchants with `player_balances = merchant_managed`, on
+`ETHEREUM`, `BSC` and `ARBITRUM`. Payout routes get a fifth of the key's rate limit.
+
+#### `POST /v1/payouts`
+
+```json
+{ "merchant_payout_id": "GK-WD-000981", "player_ref": "gk_player_8812", "network": "ARBITRUM",
+  "asset": "USDC", "amount": "25.00", "destination_address": "0xAbC…", "metadata": { "withdrawal": "W-1" } }
+```
+
+| Field | Rules |
+|---|---|
+| `merchant_payout_id` | Required, unique per merchant, `A-Z a-z 0-9 . _ : -` |
+| `player_ref` | Required, up to 128 characters, kept for audit |
+| `network`, `asset` | Required; asset symbol enabled on that network |
+| `amount` | Required positive decimal string: what the player receives |
+| `destination_address` | Required; valid for the network, not the zero address or a platform wallet |
+| `metadata` | Optional object, returned as is |
+
+`201` for a new payout, `200` with the existing payout when the same `merchant_payout_id` is sent again with the same
+details.
+
+```json
+{ "id": "po_01JA…", "object": "payout", "status": "processing", "status_reason": null,
+  "merchant_payout_id": "GK-WD-000981", "player_ref": "gk_player_8812",
+  "network": "ARBITRUM", "asset": "USDC", "asset_id": "USDC_ARBITRUM",
+  "amount": "25.000000", "fee": "0.250000", "total_debited": "25.250000",
+  "destination_address": "0xAbC…", "tx_hash": null, "confirmations": 0, "required_confirmations": 20,
+  "metadata": { "withdrawal": "W-1" }, "created_at": "…", "updated_at": "…", "completed_at": null }
+```
+
+`fee` is the merchant's `payout_fee_bps`, charged on top; `total_debited` comes out of liquidity. If liquidity is
+short the payout is created as `awaiting_liquidity` and reserved automatically, oldest first, when funds arrive.
+
+Errors: `400 invalid_destination_address`, `400 invalid_amount`, `400 unsupported_asset`, `403 forbidden`,
+`409 payout_conflict`, `409 payouts_require_merchant_managed_balances`, `422 payout_limit_exceeded`,
+`503 payouts_unavailable`.
+
+#### `GET /v1/payouts/{id}`
+
+#### `GET /v1/payouts`
+
+Query: `merchant_payout_id` (exact lookup), or `player_ref`, `status`, `limit`, `starting_after`.
+
+#### `POST /v1/payouts/{id}/cancel`
+
+Only while `awaiting_liquidity` or `processing` (before signing); releases the reservation. Otherwise
+`409 payout_not_cancellable`.
+
 ## 3. Checkout API `/checkout/v1`
 
 Used by the hosted payment page. The page reads the token from the `payment_url` fragment and sends it as a header.
@@ -425,10 +481,11 @@ Header `X-Admin-Token: <ADMIN_TOKEN>`. Never exposed on the public ingress. All 
 Any subset of:
 
 ```json
-{ "player_balances": "merchant_managed", "require_signed_requests": true, "rate_limit_per_second": 50 }
+{ "player_balances": "merchant_managed", "require_signed_requests": true, "rate_limit_per_second": 50,
+  "deposit_fee_bps": 100, "payout_fee_bps": 100 }
 ```
 
-`rate_limit_per_second` is 1 to 10000. Audited as `merchant.settings_updated`.
+`rate_limit_per_second` is 1 to 10000. `deposit_fee_bps` and `payout_fee_bps` (0 to 10000) arrive with PR #8. Audited as `merchant.settings_updated`.
 
 #### `POST /internal/v1/merchants/{id}/api-keys`
 
@@ -438,6 +495,19 @@ Any subset of:
 ```
 
 Operator-issued keys may carry any scope, including `payouts:write`. `201` with both secrets, shown once.
+
+#### Payout operations
+
+**Built, pending merge in PR #8.**
+
+| Method and path | Purpose |
+|---|---|
+| `PUT /internal/v1/merchants/{id}/payout_limits/{asset_id}` | Set `per_payout` and/or `per_day` (rolling 24 hours), decimal strings |
+| `DELETE /internal/v1/merchants/{id}/payout_limits/{asset_id}` | Remove the limits for that asset |
+| `GET /internal/v1/payouts/{id}` | Payout with `merchant_id`, status `history` and `transaction` (tx hash, from address, nonce, broadcast count and times) |
+| `POST /internal/v1/payouts/{id}/resolve_failed` | Fail a `needs_review` payout whose transaction provably can never be mined (checked live against the chain), refunding liquidity. Otherwise `409 payout_not_resolvable` |
+
+All are audited (`payout_limits.updated`, `payout_limits.removed`, `payout.resolved_failed`).
 
 ## 5. Health and metrics
 
@@ -484,8 +554,16 @@ Verify `HMAC-SHA256(secret, t + "." + raw_body)`, reject `t` older than 5 minute
 | `payment_session.needs_review` | session | Wrong asset sent, or a payment needs review |
 | `payment_session.reversed` | session | A reorg removed an unconfirmed payment; back to `open` or `expired` |
 
-Planned: `payout.processing`, `payout.broadcast`, `payout.completed`, `payout.failed`, `payout.cancelled`,
-`payout.needs_review`, `liquidity.low`.
+| `payout.awaiting_liquidity` | payout | Created, waiting for merchant liquidity (PR #8) |
+| `payout.processing` | payout | Liquidity reserved, about to sign (PR #8) |
+| `payout.broadcast` | payout | Sent to the network, `tx_hash` set; also after a reorg drops its block (PR #8) |
+| `payout.confirming` | payout | In a block, counting confirmations (PR #8) |
+| `payout.completed` | payout | Final on chain (PR #8) |
+| `payout.failed` | payout | Reverted or provably never minable; liquidity refunded (PR #8) |
+| `payout.cancelled` | payout | Cancelled before signing; liquidity refunded (PR #8) |
+| `payout.needs_review` | payout | Outcome uncertain; still tracked (PR #8) |
+
+Planned: `liquidity.low`.
 
 ## 7. Planned endpoints
 
@@ -493,7 +571,7 @@ Not built. Shapes come from the agreed designs and may change.
 
 | Endpoint | Purpose | Phase |
 |---|---|---|
-| `POST /v1/payouts`, `GET /v1/payouts/{id}`, `GET /v1/payouts?merchant_payout_id=`, `POST /v1/payouts/{id}/cancel` | Player cashouts (scope `payouts:write`, signed, IP allowlisted) | 2c, in progress |
+| Cashouts for `platform_managed` merchants, Tron and Bitcoin payouts, custody signer | Extends `/v1/payouts` | After PR #8 |
 | Merchant payout endpoints (own withdrawals to whitelisted addresses) | Merchant payouts | After 2c |
 | `GET /v1/reports/transactions?from=&to=&format=csv`, `GET /v1/reconciliation/daily?date=` | Reports and reconciliation | 2e |
 | `POST /v1/exchange/quotes`, `POST /v1/exchanges` | Cross-chain exchange | Later |
@@ -512,7 +590,7 @@ Not built. Shapes come from the agreed designs and may change.
 | Merchant | `active`, `suspended`, `closed` |
 | User | `active`, `blocked`, `closed` |
 | KYC (merchant and user) | `not_required`, `required`, `pending`, `verified`, `rejected` (module planned; stays `not_required` today) |
-| Payout (planned) | `pending`, `awaiting_liquidity`, `processing`, `signing`, `broadcast`, `confirming`, `completed`, `failed`, `cancelled`, `needs_review` |
+| Payout (PR #8) | `awaiting_liquidity`, `processing`, `broadcast`, `confirming`, `completed`, `failed`, `cancelled`, `needs_review` (an internal `signing` step sends no webhook) |
 
 ## 9. Error codes
 
@@ -538,6 +616,11 @@ Not built. Shapes come from the agreed designs and may change.
 | 409 | `session_not_cancellable` | Session already paid or closed |
 | 409 | `key_inactive` | Key already revoked or expired |
 | 409 | `nothing_to_redeliver` | No enabled endpoint had this event |
+| 400 | `invalid_destination_address` | Payout address invalid for the network, zero, or a platform wallet (PR #8) |
+| 409 | `payout_conflict`, `payout_not_cancellable`, `payout_not_resolvable` | Payout rules (PR #8) |
+| 409 | `payouts_require_merchant_managed_balances` | Payouts need `player_balances = merchant_managed` (PR #8) |
+| 422 | `payout_limit_exceeded` | Above the per-payout or 24-hour limit (PR #8) |
+| 503 | `payouts_unavailable` | Payouts not enabled on that network (PR #8) |
 | 409 | `idempotency_request_in_progress` | Same key still being processed; retry shortly |
 | 413 | `request_too_large` | Body too large |
 | 422 | `idempotency_key_reused` | Same key, different request |

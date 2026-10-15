@@ -2,7 +2,8 @@
 
 Status as of 2026-10-14, code on `main` through PR #6 (Phase 2b).
 
-Every page marks what is **live** (built, tested and merged) and what is **planned** (designed, not built yet).
+Every page marks what is **live** (built, tested and merged), what is **built, pending merge** (in an open pull
+request), and what is **planned** (designed, not built yet).
 If a page and the code disagree, the code wins; please fix the page.
 
 ## Start here
@@ -20,6 +21,7 @@ If a page and the code disagree, the code wins; please fix the page.
 |---|---|
 | [Merchant authentication](merchant-authentication.md) | API keys, scopes, IP allowlists, request signing with test vector, key rotation |
 | [Payment sessions](payment-sessions.md) | Integration guide for gaming merchants: sessions, statuses, webhooks, hosted page, sandbox |
+| [Payouts](payouts.md) | Integration guide for cashouts to players (arrives with PR #8) |
 | [Payment flows](payment-flows.md) | Design of deposits, cashouts, merchant liquidity, payouts, cross-chain exchange, ledger postings |
 | [Architecture](architecture.md) | Stack, service map, custody, chains, security, scaling and delivery phases |
 
@@ -37,7 +39,9 @@ If a page and the code disagree, the code wins; please fix the page.
 | Webhooks: endpoints, signed delivery, retries, delivery log, redelivery, secret rotation | Live | PR #2, #6 |
 | Idempotency keys, audit log, outbox events | Live | PR #2 |
 | Sandbox deposit simulation | Live | PR #3 |
-| Player cashouts and merchant payouts, liquidity reservation, signer | Planned (Phase 2c, in progress) | [payment-flows.md](payment-flows.md) §4.2, §6 |
+| Payouts (cashouts) to players for `merchant_managed` merchants: API, liquidity reservation, `awaiting_liquidity` queue, EVM signing and broadcast, review state, payout limits and fees | Built, pending merge (PR #8). Ethereum, BSC and Arbitrum only; live signing waits for the custody provider | [payouts.md](payouts.md) |
+| Cashouts for `platform_managed` merchants (player balance reservation), Tron and Bitcoin payouts | Planned | [payment-flows.md](payment-flows.md) §4.2 |
+| Merchant payouts (merchant withdraws its own funds) | Planned | [payment-flows.md](payment-flows.md) §6 |
 | Hosted payment page (Next.js) | Planned (Phase 2d) | API behind it is live |
 | Merchant dashboard | Planned | [merchant-workflow.md](merchant-workflow.md) |
 | Admin console with SSO, roles and approvals | Planned | [admin-workflow.md](admin-workflow.md) |

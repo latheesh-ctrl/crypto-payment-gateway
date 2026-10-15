@@ -1,6 +1,7 @@
 # Admin workflow
 
-Status as of 2026-10-14. Operators work today through the internal API (`/internal/v1`, four endpoints), service
+Status as of 2026-10-15. Operators work today through the internal API (`/internal/v1`, four endpoints on `main`,
+plus four payout endpoints in PR #8, pending merge), service
 configuration and the database. The **admin console** (Next.js, per-operator SSO, roles, approvals) is planned;
 section 3 describes how it is meant to work.
 
@@ -35,7 +36,20 @@ curl $GW/internal/v1/merchants/mch_… -H "X-Admin-Token: $T"
 Go-live: issue an `sk_live_` key from the live deployment. A key that can create payouts must have an
 `ip_allowlist`. Only operator-issued keys can carry `payouts:write` unless the merchant already has a key with it.
 
-### 1.3 Configure chains and wallets
+### 1.3 Payout controls (built, pending merge in PR #8)
+
+| Task | How |
+|---|---|
+| Set fees | `PATCH /internal/v1/merchants/{id}/settings` with `deposit_fee_bps`, `payout_fee_bps` |
+| Set payout limits per asset | `PUT /internal/v1/merchants/{id}/payout_limits/{asset_id}` with `per_payout` and/or `per_day`; `DELETE` to remove |
+| Investigate a payout | `GET /internal/v1/payouts/{id}`: status history and the transaction (hash, nonce, broadcasts) |
+| Resolve a payout in `needs_review` | If it confirms on chain it completes by itself. If the chain proves it can never be mined, `POST /internal/v1/payouts/{id}/resolve_failed` refunds the merchant's liquidity; the gateway re-checks the proof and refuses otherwise |
+| Enable payouts on a chain | `PAYOUTS_<CHAIN>_ENABLED`, `PAYOUTS_<CHAIN>_RPC_URL`, `PAYOUTS_<CHAIN>_MAX_GAS_PRICE_WEI` (Ethereum, BSC, Arbitrum). `PAYOUTS_<CHAIN>_DEV_PRIVATE_KEY` is for local and test networks only; live mode refuses to start with it until the custody signer exists |
+| Change when payouts go to review | `PAYOUTS_STUCK_AFTER` (default 30 minutes) |
+
+Never create a second payout for one that is in review.
+
+### 1.4 Configure chains and wallets
 
 Done through environment variables per deployment (see the [README](../README.md#configuration)):
 
@@ -50,14 +64,14 @@ Done through environment variables per deployment (see the [README](../README.md
 Enabling a new token on an existing chain is a row in the `assets` table plus the `enabled` and `accept_payments`
 flags; no code change.
 
-### 1.4 Monitor
+### 1.5 Monitor
 
 - `GET /actuator/health/readiness` and `/liveness` for probes.
 - `GET /actuator/prometheus` for metrics, including chain head and scan lag per chain.
 - Deposits stuck at finality mean a verifier is unavailable; they retry every 30 seconds and are never credited until
   verification succeeds.
 
-### 1.5 Handle exceptions (database only today)
+### 1.6 Handle other exceptions (database only today)
 
 There is no operator API for these yet; operators query the database directly, read-only:
 
@@ -76,7 +90,7 @@ There is no operator API for these yet; operators query the database directly, r
 | Merchants | Onboard, configure, suspend | Internal API (create, settings, keys) | Console with KYB review, suspend/close, limits, fee plans |
 | Risk and compliance | KYC/KYB (optional, off by default), AML wallet screening, sanctions | Not built | Toggle KYC per merchant, country or volume; AML screening on every deposit and payout; case management |
 | Deposits | Exceptions and recovery | Database | Review queue with approve, refund or compensating entry (two-person) |
-| Cashouts and payouts | Approvals above thresholds, stuck transactions | Not built | Approval queue, `needs_review` resolution, re-broadcast of the same signed tx |
+| Cashouts and payouts | Limits, fees, stuck transactions | Payout limits, fees, investigation and `resolve_failed` via internal API (PR #8); the same signed tx is re-broadcast automatically | Approval queue with two-person approval above thresholds |
 | Liquidity | Merchant liquidity health | `GET /v1/liquidity` per merchant key only | Platform-wide view, low-balance alerts, `awaiting_liquidity` queue |
 | Wallets and custody | Hot/warm/cold balances, gas tanks, sweeps | Not built (provider not chosen) | Wallet health page, rebalancing proposals with quorum approval |
 | Ledger and finance | Reconciliation, fees, reports | Database | Daily reconciliation runs, items, proof of solvency, exports |
@@ -129,9 +143,9 @@ two explorers with the ledger posting (if any), and chooses: credit (if verifica
 uncredited and arrange recovery, or post a compensating entry for a credit that should not stand. Finance approves.
 The merchant receives the resulting webhook.
 
-**Cashout stuck in `needs_review` (planned).** The outcome on chain is uncertain, so funds stay reserved. Treasury
-checks the signed transaction on chain. If it confirmed, mark completed; if it provably cannot confirm, mark failed
-(reservation returns to liquidity). Never create a second payout for the same cashout.
+**Cashout stuck in `needs_review` (API in PR #8, console planned).** The outcome on chain is uncertain, so funds stay reserved. Treasury
+checks the signed transaction on chain. If it confirms, the payout completes by itself; if it provably cannot confirm,
+`resolve_failed` marks it failed and the reservation returns to liquidity. Never create a second payout for the same cashout.
 
 **Daily reconciliation (planned).** Finance reviews the run: deposits and payouts on chain against ledger, wallet
 balances against liabilities. Any shortfall automatically pauses payouts and pages on-call.

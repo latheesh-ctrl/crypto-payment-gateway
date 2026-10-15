@@ -1,7 +1,7 @@
 # End-to-end workflows
 
-Status as of 2026-10-14 (code on `main` through PR #6). Sections marked **Planned** describe the agreed design;
-the code does not do them yet.
+Status as of 2026-10-15 (code on `main` through PR #6). Sections marked **Planned** describe the agreed design;
+the code does not do them yet. Cashouts (section 9) are built in PR #8, pending merge.
 
 Contents:
 1. [The system at a glance](#1-the-system-at-a-glance)
@@ -12,7 +12,7 @@ Contents:
 6. [Merchant liquidity pay-in](#6-merchant-liquidity-pay-in-live)
 7. [What happens on the blockchain side](#7-what-happens-on-the-blockchain-side-live)
 8. [Webhook delivery](#8-webhook-delivery-live)
-9. [Player cashout](#9-player-cashout-planned)
+9. [Player cashout](#9-player-cashout-built-pending-merge-in-pr-8)
 10. [Merchant payout](#10-merchant-payout-planned)
 11. [Reconciliation and reporting](#11-reconciliation-and-reporting-planned)
 12. [Testing end to end in the sandbox](#12-testing-end-to-end-in-the-sandbox-live)
@@ -288,10 +288,11 @@ sequenceDiagram
   that resolves to a private, loopback or link-local address is refused at send time (SSRF guard). Redirects are not
   followed. At most 10 enabled endpoints per merchant.
 
-## 9. Player cashout (Planned)
+## 9. Player cashout (Built, pending merge in PR #8)
 
-Phase 2c, being built now. Designed in [payment-flows.md](payment-flows.md) §4.2 and in the gaming merchant
-integration plan §5. Endpoint names and statuses below may still change before it merges.
+Built in PR #8 for merchants with `player_balances = merchant_managed`, on Ethereum, BNB Smart Chain and Arbitrum.
+Live signing waits for the custody provider: today the only signer is a development key that live mode refuses.
+Full guide: [payouts.md](payouts.md).
 
 ```mermaid
 sequenceDiagram
@@ -299,32 +300,51 @@ sequenceDiagram
     participant G as Game server
     participant API as Gateway API
     participant L as Ledger
-    participant S as Signer (custody)
+    participant Wk as Payout worker
+    participant S as Signer (dev key today, custody later)
     participant C as Chain
-    P->>G: "Withdraw 100 USDT to 0xabc"
-    G->>G: checks and debits the player's game wallet
+    P->>G: "Withdraw 25 USDC to 0xabc"
+    G->>G: reserves 25 in the player's game wallet
     G->>API: POST /v1/payouts (scope payouts:write, signed, IP allowlisted)
-    API->>API: validate address, asset, limits, screening
+    API->>API: validate address, asset, limits
     alt enough merchant liquidity
-        API->>L: Dr merchant liquidity C+K / Cr liquidity allocated C+K
-        API-->>G: 202 po_..., pending
+        API->>L: Dr merchant liquidity 25+fee / Cr liquidity allocated 25+fee
+        API-->>G: 201 po_..., processing (+ payout.processing)
     else not enough
-        API-->>G: 202 po_..., awaiting_liquidity (+ liquidity.low webhook)
+        API-->>G: 201 po_..., awaiting_liquidity (reserved later, oldest first)
     end
-    API->>S: signing request within policy (2nd approval above thresholds)
-    S-->>API: signed tx
-    API->>C: broadcast (same signed tx re-broadcast if uncertain)
-    C-->>API: final confirmations
-    API->>L: Dr allocated C+K / Cr hot wallet C / Cr platform fees K
-    API-->>G: payout.completed
+    Wk->>S: sign exactly one transaction (nonce under row lock)
+    S-->>Wk: signed bytes, stored before broadcast
+    Wk->>C: broadcast (re-sends only those same bytes)
+    API-->>G: payout.broadcast (tx_hash)
+    C-->>Wk: block, then finality
+    API-->>G: payout.confirming, then payout.completed
+    API->>L: Dr allocated 25+fee / Cr hot wallet 25 / Cr platform fees fee
+    G->>G: finalise the withdrawal
 ```
 
-Planned statuses: `pending → processing → signing → broadcast → confirming → completed`, plus
-`awaiting_liquidity`, `failed` (reservation released), `cancelled` (only before signing), `needs_review` (uncertain
-outcome; funds stay reserved, never paid twice).
+Statuses: `awaiting_liquidity`, `processing`, `broadcast`, `confirming`, `completed`, plus `failed` and `cancelled`
+(liquidity refunded, the game returns the amount to the player) and `needs_review` (outcome uncertain; still
+tracked, and it ends in `completed` or `failed`). Every change sends `payout.<status>`.
 
-For `platform_managed` merchants the gateway also reserves the player's own balance
-(Dr user available / Cr user reserved) in the same transaction.
+How it avoids paying twice:
+
+- Re-sending the same `merchant_payout_id` with the same details returns the existing payout; different details
+  return `409 payout_conflict`.
+- One signed transaction per payout, stored before broadcast. Retries and restarts only re-send those bytes.
+- A transaction not final within 30 minutes (`PAYOUTS_STUCK_AFTER`), or whose nonce was used by something else, goes
+  to `needs_review`, never to a second payout. An operator can mark it `failed` only when the chain proves the
+  transaction can never be mined; the gateway checks that proof itself.
+- Cancel is allowed only before signing (`awaiting_liquidity` or `processing`).
+- Network gas is paid by the platform in the chain's native coin. Payouts wait instead of signing while gas is above
+  the configured cap.
+
+Merchant controls set by operators: `payout_fee_bps` (on top of the amount) and per-asset payout limits
+(`per_payout`, rolling `per_day`).
+
+Not built yet: cashouts for `platform_managed` merchants (which also reserve the player's own balance,
+Dr user available / Cr user reserved), Tron and Bitcoin payouts, the custody-provider signer, sweeps, and a
+`liquidity.low` webhook.
 
 ## 10. Merchant payout (Planned)
 
